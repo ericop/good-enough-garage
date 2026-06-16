@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Good Enough Garage</title>
+  <style>
+    :root {
+      --bg: #11161d;
+      --bg-2: #0b0f14;
+      --panel: #1a222c;
+      --panel-2: #222d3a;
+      --line: #324150;
+      --ink: #eef3f8;
+      --muted: #9fb0c0;
+      --accent: #ffc94a;     /* caution-tape amber */
+      --accent-ink: #2a2102;
+      --good: #4ec77d;       /* ship / commit green */
+      --good-dark: #2f9d5c;
+      --bad: #ef5d5d;
+      --rush: #ff7a45;
+      --comeback: #c07be0;
+      --eng: #ef5d5d;
+      --brk: #ff9f45;
+      --ele: #ffd24a;
+      --bod: #5aa9ff;
+      --radius: 12px;
+      --tap: 44px;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      background: radial-gradient(1200px 600px at 50% -10%, #1b2733, var(--bg)) fixed;
+      color: var(--ink);
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      font-size: 16px;
+      line-height: 1.4;
+      overflow-x: hidden;
+      -webkit-text-size-adjust: 100%;
+    }
+
+    #app { max-width: 1100px; margin: 0 auto; padding: 10px 12px 40px; }
+
+    /* ---------- header ---------- */
+    .app-header {
+      position: sticky; top: 0; z-index: 5;
+      background: linear-gradient(var(--bg), rgba(17,22,29,.92));
+      padding: 8px 0 10px;
+      border-bottom: 1px solid var(--line);
+      margin-bottom: 12px;
+    }
+    .brand { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+    .brand-name {
+      font-weight: 800; letter-spacing: .3px; font-size: 1.15rem;
+      background: linear-gradient(90deg, var(--accent), #ffe6a0);
+      -webkit-background-clip: text; background-clip: text; color: transparent;
+    }
+    .brand-name::before { content: "🔧 "; -webkit-text-fill-color: initial; }
+
+    .statbar { display: flex; flex-wrap: wrap; gap: 6px; }
+    .stat {
+      display: flex; flex-direction: column; align-items: flex-start;
+      background: var(--panel); border: 1px solid var(--line);
+      border-radius: 9px; padding: 5px 9px; min-width: 64px; flex: 1 1 auto;
+    }
+    .stat-label { font-size: .62rem; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); }
+    .stat-value { font-size: 1.02rem; font-weight: 700; }
+    .stat.danger .stat-value { color: var(--bad); }
+
+    /* ---------- layout ---------- */
+    .help { color: var(--muted); font-size: .85rem; margin: 2px 2px 12px; }
+    .floor-cols { display: grid; grid-template-columns: 1fr; gap: 12px; }
+    @media (min-width: 760px) { .floor-cols { grid-template-columns: 1fr 1fr; } }
+
+    .panel {
+      background: var(--panel); border: 1px solid var(--line);
+      border-radius: var(--radius); padding: 12px;
+    }
+    .panel-title { margin: 0 0 10px; font-size: 1rem; display: flex; align-items: baseline; gap: 6px; }
+    .panel-title .count { color: var(--muted); font-weight: 600; font-size: .85rem; }
+    .cards { display: flex; flex-direction: column; gap: 10px; }
+    .empty { color: var(--muted); font-style: italic; margin: 6px 2px; }
+
+    /* ---------- car cards ---------- */
+    .card {
+      background: var(--panel-2); border: 1px solid var(--line);
+      border-radius: 10px; padding: 10px;
+    }
+    .car.rush { border-color: var(--rush); box-shadow: 0 0 0 1px rgba(255,122,69,.25) inset; }
+    .car.comeback { border-color: var(--comeback); }
+    .car-top { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+    .car-model { font-weight: 800; font-size: 1.05rem; }
+    .car-sub { color: var(--muted); font-size: .82rem; margin: 2px 0 6px; }
+    .complaint { font-size: .9rem; margin-bottom: 8px; }
+    .complaint em { color: var(--accent); font-style: italic; }
+    .rush-line { font-size: .8rem; color: var(--rush); margin-bottom: 8px; }
+
+    .badge {
+      font-size: .62rem; font-weight: 800; letter-spacing: .5px;
+      padding: 2px 6px; border-radius: 999px; text-transform: uppercase;
+    }
+    .rush-badge { background: var(--rush); color: #2a0e02; }
+    .comeback-badge { background: var(--comeback); color: #240a30; }
+
+    /* patience */
+    .patience { margin-bottom: 10px; }
+    .p-label { font-size: .72rem; color: var(--muted); }
+    .p-bar { height: 7px; background: #0e141b; border-radius: 999px; overflow: hidden; margin-top: 3px; }
+    .p-fill { height: 100%; background: var(--good); transition: width .2s ease; }
+    .p-fill.low { background: var(--bad); }
+
+    /* ---------- faults ---------- */
+    .faults { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 10px; }
+    .fault, .fault-wrap > .fault {
+      display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+      background: #14202c; border: 1px solid var(--line);
+      border-radius: 8px; padding: 6px 8px; font-size: .9rem;
+    }
+    .fault.hidden { color: var(--muted); border-style: dashed; }
+    .f-q { font-weight: 800; letter-spacing: 2px; }
+    .f-hint { font-size: .72rem; }
+    .fault.repaired { border-color: var(--good-dark); }
+    .f-check { color: var(--good); font-weight: 800; }
+    .f-label { font-weight: 600; }
+    .f-spec { font-size: .68rem; color: var(--accent); }
+    .fault .btn-repair { margin-left: auto; }
+
+    .type-badge {
+      font-size: .65rem; text-transform: uppercase; letter-spacing: .4px;
+      padding: 1px 6px; border-radius: 999px; font-weight: 700; color: #0b0f14;
+    }
+    .type-engine { background: var(--eng); }
+    .type-brakes { background: var(--brk); }
+    .type-electrical { background: var(--ele); }
+    .type-body { background: var(--bod); }
+
+    .mech-picker { display: flex; flex-wrap: wrap; gap: 6px; padding: 2px 0 4px; }
+    .mech-picker .mech { flex: 1 1 auto; }
+    .mech.match { border-color: var(--accent); color: var(--accent); }
+
+    /* ---------- buttons ---------- */
+    .btn {
+      min-height: var(--tap); min-width: var(--tap);
+      padding: 8px 14px; font-size: 1rem; font-weight: 700;
+      border-radius: 10px; border: 1px solid var(--line);
+      background: var(--panel); color: var(--ink); cursor: pointer;
+      touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+      transition: transform .05s ease, filter .15s ease;
+    }
+    .btn:hover { filter: brightness(1.08); }
+    .btn:active { transform: translateY(1px); }
+    .btn[disabled] { opacity: .42; cursor: not-allowed; filter: none; }
+
+    .btn-intake { width: 100%; background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+    .bay-actions { display: flex; gap: 8px; }
+    .btn-diagnose { flex: 1 1 0; }
+    .btn-ship {
+      flex: 2 1 0; min-height: 52px; font-size: 1.1rem; font-weight: 800;
+      background: linear-gradient(180deg, var(--good), var(--good-dark));
+      color: #06240f; border-color: transparent;
+      box-shadow: 0 3px 0 #1e6e3f, 0 6px 14px rgba(78,199,125,.25);
+    }
+    .btn-ship:active { box-shadow: 0 1px 0 #1e6e3f; }
+
+    .floor-actions { margin: 14px 0; }
+    .btn-end { width: 100%; background: var(--panel-2); border-color: var(--line); }
+
+    .btn-primary { background: var(--accent); color: var(--accent-ink); border-color: transparent; width: 100%; }
+
+    /* ---------- log ---------- */
+    .log { margin-top: 12px; }
+    .log-list { display: flex; flex-direction: column; gap: 4px; }
+    .log-line { font-size: .82rem; color: var(--muted); padding: 4px 6px; background: #131b24; border-radius: 6px; }
+
+    /* ---------- shop ---------- */
+    .screen-title { margin: 4px 0 6px; }
+    .shop-cards { display: grid; grid-template-columns: 1fr; gap: 10px; margin: 12px 0; }
+    @media (min-width: 620px) { .shop-cards { grid-template-columns: repeat(3, 1fr); } }
+    .upgrade { display: flex; flex-direction: column; gap: 6px; }
+    .upgrade.bought { opacity: .7; }
+    .up-name { font-weight: 800; font-size: 1.05rem; }
+    .up-desc { color: var(--muted); font-size: .85rem; flex: 1; }
+    .up-cost { font-weight: 800; color: var(--accent); }
+    .btn-buy { width: 100%; }
+
+    /* ---------- game over ---------- */
+    .gameover { text-align: center; padding: 40px 14px; max-width: 480px; margin: 0 auto; }
+    .go-title { font-size: 2rem; margin: 0 0 8px; }
+    .go-title.win { color: var(--good); }
+    .go-title.lose { color: var(--bad); }
+    .go-result { font-size: 1.1rem; margin-bottom: 18px; }
+    .go-summary { display: flex; flex-direction: column; gap: 6px; color: var(--muted); margin-bottom: 22px; }
+    .go-summary b { color: var(--ink); }
+
+    /* ---------- toasts ---------- */
+    .toast-wrap { position: fixed; left: 0; right: 0; bottom: 14px; display: flex; flex-direction: column; align-items: center; gap: 8px; pointer-events: none; z-index: 50; padding: 0 10px; }
+    .toast {
+      background: var(--comeback); color: #fff; font-weight: 700;
+      padding: 10px 16px; border-radius: 999px; max-width: 92vw; text-align: center;
+      box-shadow: 0 6px 20px rgba(0,0,0,.4); animation: toast-in .25s ease;
+    }
+    @keyframes toast-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+  </style>
+</head>
+<body>
+  <div id="app" data-screen="floor"></div>
+  <noscript style="color:#fff;display:block;padding:20px;text-align:center">Good Enough Garage needs JavaScript enabled.</noscript>
+  <script src="game.js" defer></script>
+</body>
+</html>
