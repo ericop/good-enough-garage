@@ -81,6 +81,25 @@
     { key: 'coffee',       name: 'Coffee Machine',desc: '+2 starting patience for all waiting cars.',  cost: 50 },
   ];
 
+  // Crew flavor for the Staff menu (keyed by mechanic id).
+  const MECH_BIOS = {
+    hank: 'Old-school grease monkey. Engines and brakes are second nature.',
+    rosa: 'Wiring and bodywork specialist with a steady hand.',
+    deb:  'Diagnostics whiz across engines and electrical.',
+    tom:  'Brakes and bodywork, fast and tidy.',
+  };
+
+  // "How to Play" wizard, one screen per step.
+  const HOWTO_STEPS = [
+    { icon: '🔧', title: 'Welcome to the garage', body: 'You run a repair shop for one week: 5 days. Each day you must earn the rent (the quota) before you close up. Miss it and you are out of business.' },
+    { icon: '🚗', title: '1. Intake (free)', body: 'Tap a car in the Lot to pull it into an open Bay. Intake is free and reveals the customer complaint: one fault you can see.' },
+    { icon: '🔍', title: '2. Diagnose (1 token)', body: 'Cars can hide up to 3 faults. Spend a token to uncover the next one. "No further faults found" means it is truly clean.' },
+    { icon: '🛠️', title: '3. Repair (1 token)', body: 'Assign a mechanic to a revealed fault. If it matches their specialty (marked ★) you earn a bonus. See the menu > Staff for who is good at what.' },
+    { icon: '✅', title: '4. Ship It (the commit)', body: 'Hand the car back and get paid. Ship a car with faults still hidden or unfixed and it pays now, but the customer returns the next day, unhappy, and you refund them. That is the gamble.' },
+    { icon: '⏳', title: 'The squeeze', body: 'Tokens and bays are limited, and every token you spend makes waiting cars lose patience. Triage! Orange RUSH jobs pay extra but leave fast.' },
+    { icon: '🏁', title: 'Close shop & win', body: 'Meet the day quota to reach the upgrade shop, then carry on. Survive all 5 days to win. Good luck!' },
+  ];
+
   // ===========================================================================
   // RNG - seeded mulberry32 so runs are reproducible via ?seed=
   // ===========================================================================
@@ -418,6 +437,9 @@
       log: [],
       toasts: [],
       pickerFor: null,
+      menuOpen: false,
+      modal: null,       // null | 'staff' | 'howto'
+      howtoStep: 0,
       result: undefined,
       loseReason: '',
     };
@@ -441,6 +463,12 @@
       case 'CONTINUE': advanceDay(); break;
       case 'RESTART': newGame(); return; // newGame renders itself
       case 'REMOVE_TOAST': state.toasts = state.toasts.filter((t) => t.id !== action.id); break;
+      case 'TOGGLE_MENU': state.menuOpen = !state.menuOpen; break;
+      case 'CLOSE_MENU': state.menuOpen = false; break;
+      case 'OPEN_MODAL': state.modal = action.name; state.menuOpen = false; if (action.name === 'howto') state.howtoStep = 0; break;
+      case 'CLOSE_MODAL': state.modal = null; break;
+      case 'HOWTO_NEXT': state.howtoStep = Math.min(HOWTO_STEPS.length - 1, state.howtoStep + 1); break;
+      case 'HOWTO_PREV': state.howtoStep = Math.max(0, state.howtoStep - 1); break;
       default: return;
     }
     render();
@@ -495,7 +523,13 @@
 
   function renderHeader() {
     return el('header', { class: 'app-header' }, [
-      el('div', { class: 'brand' }, [el('span', { class: 'brand-name', text: 'Good Enough Garage' })]),
+      el('div', { class: 'brand' }, [
+        el('span', { class: 'brand-name', text: 'Good Enough Garage' }),
+        el('div', { class: 'menu-wrap' }, [
+          el('button', { 'data-testid': 'btn-menu', class: 'btn-menu', 'aria-label': 'Menu', text: '☰', onclick: () => dispatch({ type: 'TOGGLE_MENU' }) }),
+          state.menuOpen ? renderMenu() : null,
+        ]),
+      ]),
       el('div', { class: 'statbar' }, [
         statItem('stat-day', 'Day', `${state.day}/${CONFIG.daysToWin}`),
         statItem('stat-cash', 'Cash', `$${state.cash}`),
@@ -671,6 +705,74 @@
     ]);
   }
 
+  function renderMenu() {
+    return el('div', { 'data-testid': 'menu', class: 'menu-dropdown' }, [
+      el('button', { 'data-testid': 'btn-menu-staff', class: 'menu-item', text: '👥 Staff', onclick: () => dispatch({ type: 'OPEN_MODAL', name: 'staff' }) }),
+      el('button', { 'data-testid': 'btn-menu-howto', class: 'menu-item', text: '❓ How to Play', onclick: () => dispatch({ type: 'OPEN_MODAL', name: 'howto' }) }),
+    ]);
+  }
+
+  function renderStaffBody() {
+    const rows = state.mechanics.map((m) => el('div', { 'data-testid': 'staff-' + m.id, class: 'staff-row' }, [
+      el('div', { class: 'staff-top' }, [
+        el('span', { class: 'staff-name', text: m.name }),
+        el('span', { class: 'staff-specs' }, m.specialties.map(typeBadge)),
+      ]),
+      el('div', { class: 'staff-bio', text: MECH_BIOS[m.id] || 'A reliable member of the crew.' }),
+    ]));
+
+    const tools = [`Bays: ${state.bays}`, `Tokens per day: ${CONFIG.startTokens + state.bonusTokens}`];
+    if (state.hasScanTool) tools.push('Scan Tool');
+    if (state.patienceBonus > 0) tools.push(`Coffee: +${state.patienceBonus} patience`);
+
+    return [
+      el('p', { class: 'modal-sub', text: 'Your mechanics and what they are best at. Match a mechanic to a fault of their specialty (★) for a bonus.' }),
+      el('div', { class: 'staff-list' }, rows),
+      el('p', { class: 'modal-sub staff-tools-title', text: 'Your garage' }),
+      el('div', { class: 'staff-tools' }, tools.map((t) => el('span', { class: 'tool-chip', text: t }))),
+      el('p', { class: 'modal-hint', text: 'Hire more specialists and buy tools in the shop between days.' }),
+    ];
+  }
+
+  function renderHowtoBody() {
+    const i = state.howtoStep;
+    const step = HOWTO_STEPS[i];
+    const last = i === HOWTO_STEPS.length - 1;
+    return [
+      el('div', { 'data-testid': 'howto-step', class: 'howto-step' }, [
+        el('div', { class: 'howto-icon', text: step.icon }),
+        el('h3', { class: 'howto-title', text: step.title }),
+        el('p', { class: 'howto-body', text: step.body }),
+      ]),
+      el('div', { class: 'howto-dots' }, HOWTO_STEPS.map((_, k) => el('span', { class: 'dot' + (k === i ? ' on' : '') }))),
+      el('div', { class: 'howto-nav' }, [
+        el('button', { 'data-testid': 'btn-howto-prev', class: 'btn', disabled: i === 0, text: 'Back', onclick: () => dispatch({ type: 'HOWTO_PREV' }) }),
+        el('span', { class: 'howto-count', text: `${i + 1} / ${HOWTO_STEPS.length}` }),
+        last
+          ? el('button', { 'data-testid': 'btn-howto-done', class: 'btn btn-primary howto-done', text: 'Got it!', onclick: () => dispatch({ type: 'CLOSE_MODAL' }) })
+          : el('button', { 'data-testid': 'btn-howto-next', class: 'btn btn-primary howto-done', text: 'Next', onclick: () => dispatch({ type: 'HOWTO_NEXT' }) }),
+      ]),
+    ];
+  }
+
+  function renderModal() {
+    if (!state.modal) return null;
+    const title = state.modal === 'staff' ? 'Your Crew' : 'How to Play';
+    const body = state.modal === 'staff' ? renderStaffBody() : renderHowtoBody();
+    return el('div', {
+      class: 'modal-backdrop',
+      onclick: (e) => { if (e.target === e.currentTarget) dispatch({ type: 'CLOSE_MODAL' }); },
+    }, [
+      el('div', { 'data-testid': 'modal-' + state.modal, class: 'modal', role: 'dialog' }, [
+        el('div', { class: 'modal-head' }, [
+          el('h2', { class: 'modal-title', text: title }),
+          el('button', { 'data-testid': 'btn-modal-close', class: 'modal-close', 'aria-label': 'Close', text: '✕', onclick: () => dispatch({ type: 'CLOSE_MODAL' }) }),
+        ]),
+        el('div', { class: 'modal-body' }, body),
+      ]),
+    ]);
+  }
+
   function renderToasts() {
     return el('div', { class: 'toast-wrap' }, state.toasts.map((t) => el('div', { class: 'toast', text: t.msg })));
   }
@@ -682,6 +784,9 @@
     if (state.screen === 'floor') { root.appendChild(renderHeader()); root.appendChild(renderFloor()); }
     else if (state.screen === 'shop') { root.appendChild(renderHeader()); root.appendChild(renderShop()); }
     else { root.appendChild(renderGameOver()); }
+    if (state.menuOpen) root.appendChild(el('div', { class: 'menu-backdrop', onclick: () => dispatch({ type: 'CLOSE_MENU' }) }));
+    const modal = renderModal();
+    if (modal) root.appendChild(modal);
     root.appendChild(renderToasts());
   }
 
