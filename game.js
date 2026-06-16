@@ -40,6 +40,10 @@
     repRushMissed: -8,
     // comeback
     comebackCashClawbackFraction: 1.0,
+    // endless mode (past the 5-day week)
+    endlessQuotaGrowth: 1.3,   // quota multiplier per day after day 5
+    premiumUpgradeDay: 6,      // premium upgrades start appearing from this day
+    premiumDiscount: 0.8,      // cost multiplier on offers once "Premium Parts" is unlocked
   };
 
   // ===========================================================================
@@ -97,8 +101,58 @@
     { icon: '🛠️', title: '3. Repair (1 token)', body: 'Assign a mechanic to a revealed fault. If it matches their specialty (marked ★) you earn a bonus. See the menu > Staff for who is good at what.' },
     { icon: '✅', title: '4. Ship It (the commit)', body: 'Hand the car back and get paid. Ship a car with faults still hidden or unfixed and it pays now, but the customer returns the next day, unhappy, and you refund them. That is the gamble.' },
     { icon: '⏳', title: 'The squeeze', body: 'Tokens and bays are limited, and every token you spend makes waiting cars lose patience. Triage! Orange RUSH jobs pay extra but leave fast.' },
-    { icon: '🏁', title: 'Close shop & win', body: 'Meet the day quota to reach the upgrade shop, then carry on. Survive all 5 days to win. Good luck!' },
+    { icon: '🏁', title: 'Beat the week', body: 'Meet the day quota to reach the upgrade shop, then carry on. Survive all 5 days to win the week.' },
+    { icon: '♾️', title: 'Go endless', body: 'After Week 1 the shop keeps going: quotas climb, bigger power-ups appear, and you push for a high score (the cash and reputation you reach). Failing ends the run.' },
+    { icon: '🏆', title: 'Unlock & return', body: 'Your best score sticks around and unlocks permanent perks for future runs. Check the menu > Progress to see what is unlocked and what is next. Good luck!' },
   ];
+
+  // Beefier upgrades that show up once you push past the first week (or sooner with the Premium Parts unlock).
+  const PREMIUM_UPGRADES = [
+    { key: 'turbo',     name: 'Turbo Crew',     desc: '+2 work tokens every day (permanent).', cost: 140 },
+    { key: 'expansion', name: 'Expansion Wing', desc: '+2 bays (permanent).',                  cost: 200 },
+    { key: 'master',    name: 'Master Tech',    desc: 'Hire an ace with three specialties.',    cost: 170 },
+  ];
+
+  // ===========================================================================
+  // META-PROGRESSION - persists across runs (localStorage). Best score unlocks perks.
+  // ===========================================================================
+  // Unlocks apply to the START of every future run, in order, when best score >= score.
+  const UNLOCKS = [
+    { key: 'coffee1', name: 'Fresh Pot',     desc: 'Start each run with +1 patience on all cars.', score: 150,  apply: (s) => { s.patienceBonus += 1; } },
+    { key: 'hand1',   name: 'Extra Hand',    desc: 'Start each run with +1 work token per day.',    score: 350,  apply: (s) => { s.bonusTokens += 1; } },
+    { key: 'bay1',    name: 'Roomy Garage',  desc: 'Start each run with +1 bay.',                    score: 600,  apply: (s) => { s.bays += 1; } },
+    { key: 'rep1',    name: 'Good Name',     desc: 'Start each run at 60 reputation.',               score: 900,  apply: (s) => { s.rep = Math.max(s.rep, 60); } },
+    { key: 'premium', name: 'Premium Parts', desc: 'Bigger upgrades appear from Day 1, and all upgrades cost less.', score: 1300, apply: (s) => { s.premium = true; } },
+  ];
+
+  const SAVE_KEY = 'geg.save.v1';
+
+  function defaultMeta() {
+    return { version: 1, best: { score: 0, cash: 0, rep: 0, day: 0 }, lifetime: { runs: 0, wins: 0 }, unlocks: {} };
+  }
+
+  function loadMeta() {
+    try {
+      const raw = localStorage.getItem(SAVE_KEY);
+      if (raw) {
+        const m = JSON.parse(raw);
+        // shallow-merge onto defaults so older/missing fields are safe
+        return Object.assign(defaultMeta(), m, {
+          best: Object.assign(defaultMeta().best, m.best),
+          lifetime: Object.assign(defaultMeta().lifetime, m.lifetime),
+          unlocks: Object.assign({}, m.unlocks),
+        });
+      }
+    } catch (e) { /* storage unavailable (private mode / file://); play without persistence */ }
+    return defaultMeta();
+  }
+
+  function saveMeta(m) {
+    try { localStorage.setItem(SAVE_KEY, JSON.stringify(m)); } catch (e) { /* ignore */ }
+  }
+
+  /** @type {any} */
+  let meta = defaultMeta();
 
   // ===========================================================================
   // RNG - seeded mulberry32 so runs are reproducible via ?seed=
@@ -307,6 +361,60 @@
     if (car) shipCar(car);
   }
 
+  // Day scaling: fixed for the first week, then it keeps climbing (endless mode).
+  function quotaForDay(day) {
+    const q = CONFIG.quotaByDay;
+    if (day <= q.length) return q[day - 1];
+    let v = q[q.length - 1];
+    for (let d = q.length + 1; d <= day; d++) v = Math.round(v * CONFIG.endlessQuotaGrowth);
+    return v;
+  }
+
+  function lotForDay(day) {
+    const l = CONFIG.lotSizeByDay;
+    if (day <= l.length) return l[day - 1];
+    return Math.min(8, l[l.length - 1] + Math.floor((day - l.length) / 2));
+  }
+
+  // High score = the cash and reputation you reached, plus a bonus for how deep you got.
+  function runScore() {
+    return Math.max(0, state.peakCash) + state.peakRep + (state.day - 1) * 20;
+  }
+
+  function trackPeaks() {
+    if (!state) return;
+    if (state.cash > state.peakCash) state.peakCash = state.cash;
+    if (state.rep > state.peakRep) state.peakRep = state.rep;
+  }
+
+  // Called once when a run ends: bank the high score and award any newly earned unlocks.
+  function finalizeRun() {
+    if (state.finalized) return;
+    state.finalized = true;
+    trackPeaks();
+    state.result = state.weekSurvived ? 'win' : 'lose';
+    state.finalScore = runScore();
+
+    meta.lifetime.runs += 1;
+    if (state.weekSurvived) meta.lifetime.wins += 1;
+
+    state.newBest = state.finalScore > meta.best.score;
+    if (state.finalScore > meta.best.score) meta.best.score = state.finalScore;
+    if (state.peakCash > meta.best.cash) meta.best.cash = state.peakCash;
+    if (state.peakRep > meta.best.rep) meta.best.rep = state.peakRep;
+    if (state.day > meta.best.day) meta.best.day = state.day;
+
+    state.newlyUnlocked = [];
+    for (const u of UNLOCKS) {
+      if (!meta.unlocks[u.key] && meta.best.score >= u.score) {
+        meta.unlocks[u.key] = true;
+        state.newlyUnlocked.push({ key: u.key, name: u.name, desc: u.desc });
+        toast(`Unlocked: ${u.name}!`);
+      }
+    }
+    saveMeta(meta);
+  }
+
   function endDay() {
     // Cars still in bays get auto-shipped as-is (risking comebacks).
     for (const car of state.inBays.slice()) shipCar(car);
@@ -321,18 +429,17 @@
     if (state.screen === 'gameover') return; // rep already bottomed out
 
     if (state.dayRevenue >= state.quota) {
-      if (state.day >= CONFIG.daysToWin) {
-        state.screen = 'gameover';
-        state.result = 'win';
-      } else {
-        state.shopOffers = makeShopOffers();
-        state.boughtThisShop = [];
-        state.pickerFor = null;
-        state.screen = 'shop';
+      // Clearing day 5 wins the week, but the run keeps going (endless).
+      if (state.day === CONFIG.daysToWin && !state.weekSurvived) {
+        state.weekSurvived = true;
+        toast('You survived the week! Keep going for a high score.');
       }
+      state.shopOffers = makeShopOffers();
+      state.boughtThisShop = [];
+      state.pickerFor = null;
+      state.screen = 'shop';
     } else {
       state.screen = 'gameover';
-      state.result = 'lose';
       state.loseReason = `Couldn't make rent on Day ${state.day}.`;
     }
   }
@@ -340,12 +447,23 @@
   function makeShopOffers() {
     const owned = state.mechanics.map((m) => m.id);
     const hireLeft = HIREABLE.filter((m) => !owned.includes(m.id));
-    const pool = UPGRADES.filter((u) => {
+    let pool = UPGRADES.filter((u) => {
       if (u.key === 'scanTool' && state.hasScanTool) return false;
       if (u.key === 'hireMechanic' && hireLeft.length === 0) return false;
       return true;
     });
-    return shuffle(pool.slice()).slice(0, 3);
+    // Bigger power-ups once you push past the week (or with the Premium Parts unlock).
+    if (state.premium || state.day >= CONFIG.premiumUpgradeDay) {
+      pool = pool.concat(PREMIUM_UPGRADES);
+    }
+    const offers = shuffle(pool.slice()).slice(0, 3);
+    // Clone so we can apply the premium discount without mutating the source tables.
+    return offers.map((u) => ({
+      key: u.key,
+      name: u.name,
+      desc: u.desc,
+      cost: state.premium ? Math.round(u.cost * CONFIG.premiumDiscount) : u.cost,
+    }));
   }
 
   function buyUpgrade(key) {
@@ -372,11 +490,21 @@
         logEvent(`Hired ${m.name} (${m.specialties.join('/')}).`);
       }
     }
+    else if (key === 'turbo') state.bonusTokens += 2;
+    else if (key === 'expansion') state.bays += 2;
+    else if (key === 'master') {
+      const specialties = shuffle(FAULT_TYPES.slice()).slice(0, 3);
+      const names = ['Ace', 'Sam', 'Jo', 'Kai', 'Lou', 'Max'];
+      const used = state.mechanics.map((m) => m.name);
+      const name = names.find((n) => !used.includes(n)) || ('Tech ' + (state.mechanics.length + 1));
+      state.mechanics.push({ id: 'master' + state.mechanics.length, name, specialties });
+      logEvent(`Hired master tech ${name} (${specialties.join('/')}).`);
+    }
   }
 
   function advanceDay() {
     state.day += 1;
-    state.quota = CONFIG.quotaByDay[state.day - 1];
+    state.quota = quotaForDay(state.day);
     state.dayRevenue = 0;
     state.tokensLeft = CONFIG.startTokens + state.bonusTokens;
     state.pickerFor = null;
@@ -384,7 +512,7 @@
     state.shopOffers = [];
     state.screen = 'floor';
 
-    const lot = generateLot(CONFIG.lotSizeByDay[state.day - 1]);
+    const lot = generateLot(lotForDay(state.day));
     // Returning comebacks are prepended and apply their penalties on arrival.
     const returning = state.pendingComebacks;
     state.pendingComebacks = [];
@@ -424,11 +552,12 @@
       tokensLeft: CONFIG.startTokens,
       cash: 0,
       dayRevenue: 0,
-      quota: CONFIG.quotaByDay[0],
+      quota: quotaForDay(1),
       rep: CONFIG.startRep,
       mechanics: START_MECHS.map((m) => ({ id: m.id, name: m.name, specialties: m.specialties.slice() })),
       hasScanTool: false,
       patienceBonus: 0,
+      premium: false,
       lot: [],
       inBays: [],
       pendingComebacks: [],
@@ -438,12 +567,28 @@
       toasts: [],
       pickerFor: null,
       menuOpen: false,
-      modal: null,       // null | 'staff' | 'howto'
+      modal: null,       // null | 'staff' | 'howto' | 'unlocks'
       howtoStep: 0,
+      resetArmed: false,
+      // run scoring + endless
+      peakCash: 0,
+      peakRep: 0,
+      weekSurvived: false,
+      finalized: false,
+      finalScore: 0,
+      newBest: false,
+      newlyUnlocked: [],
       result: undefined,
       loseReason: '',
     };
-    state.lot = generateLot(CONFIG.lotSizeByDay[0]);
+
+    // Apply persistent unlocks to the starting state, then derive dependent values.
+    for (const u of UNLOCKS) if (meta.unlocks[u.key]) u.apply(state);
+    state.tokensLeft = CONFIG.startTokens + state.bonusTokens;
+    state.peakCash = state.cash;
+    state.peakRep = state.rep;
+
+    state.lot = generateLot(lotForDay(1));
     logEvent(`Day 1: ${state.lot.length} cars in the lot. Quota $${state.quota}.`);
     render();
   }
@@ -465,12 +610,16 @@
       case 'REMOVE_TOAST': state.toasts = state.toasts.filter((t) => t.id !== action.id); break;
       case 'TOGGLE_MENU': state.menuOpen = !state.menuOpen; break;
       case 'CLOSE_MENU': state.menuOpen = false; break;
-      case 'OPEN_MODAL': state.modal = action.name; state.menuOpen = false; if (action.name === 'howto') state.howtoStep = 0; break;
-      case 'CLOSE_MODAL': state.modal = null; break;
+      case 'OPEN_MODAL': state.modal = action.name; state.menuOpen = false; state.resetArmed = false; if (action.name === 'howto') state.howtoStep = 0; break;
+      case 'CLOSE_MODAL': state.modal = null; state.resetArmed = false; break;
       case 'HOWTO_NEXT': state.howtoStep = Math.min(HOWTO_STEPS.length - 1, state.howtoStep + 1); break;
       case 'HOWTO_PREV': state.howtoStep = Math.max(0, state.howtoStep - 1); break;
+      case 'ARM_RESET': state.resetArmed = !state.resetArmed; break;
+      case 'RESET_META': meta = defaultMeta(); saveMeta(meta); state.resetArmed = false; break;
       default: return;
     }
+    trackPeaks();
+    if (state.screen === 'gameover') finalizeRun();
     render();
   }
 
@@ -692,22 +841,42 @@
 
   function renderGameOver() {
     const win = state.result === 'win';
-    const msg = win ? 'You survived the week!' : (state.loseReason || `Couldn't make rent on Day ${state.day}.`);
-    return el('div', { class: 'gameover' }, [
-      el('h1', { class: 'go-title ' + (win ? 'win' : 'lose'), text: win ? '🏁 Win!' : 'Game Over' }),
-      el('p', { 'data-testid': 'gameover-result', class: 'go-result', text: msg }),
-      el('div', { class: 'go-summary' }, [
-        el('div', {}, [win ? 'Survived all ' + CONFIG.daysToWin + ' days.' : `Made it to Day ${state.day}.`]),
-        el('div', {}, ['Cash in the bank: ', el('b', { text: '$' + state.cash })]),
-        el('div', {}, ['Reputation: ', el('b', { text: String(state.rep) })]),
-      ]),
-      el('button', { 'data-testid': 'btn-restart', class: 'btn btn-primary', text: 'Play Again', onclick: () => dispatch({ type: 'RESTART' }) }),
+    const msg = win
+      ? (state.day > CONFIG.daysToWin ? `You beat the week and pushed to Day ${state.day}!` : 'You survived the week!')
+      : (state.loseReason || `Couldn't make rent on Day ${state.day}.`);
+    const stat = (label, value) => el('div', { class: 'score-stat' }, [
+      el('span', { class: 'score-num', text: String(value) }),
+      el('span', { class: 'score-label', text: label }),
     ]);
+    const children = [
+      el('h1', { class: 'go-title ' + (win ? 'win' : 'lose'), text: win ? '🏁 You beat the week!' : 'Game Over' }),
+      el('p', { 'data-testid': 'gameover-result', class: 'go-result', text: msg }),
+      el('div', { 'data-testid': 'final-score', class: 'final-score' + (state.newBest ? ' newbest' : '') }, [
+        el('span', { class: 'fs-num', text: String(state.finalScore) }),
+        el('span', { class: 'fs-label', text: state.newBest ? 'NEW HIGH SCORE!' : `Score (best ${meta.best.score})` }),
+      ]),
+      el('div', { 'data-testid': 'go-summary', class: 'score-grid' }, [
+        stat('Day reached', state.day),
+        stat('Peak cash', '$' + state.peakCash),
+        stat('Peak rep', state.peakRep),
+      ]),
+    ];
+    if (state.newlyUnlocked && state.newlyUnlocked.length) {
+      children.push(el('div', { 'data-testid': 'go-unlocks', class: 'go-unlocks' }, [
+        el('div', { class: 'go-unlocks-title', text: '🎉 New unlocks for next run' }),
+      ].concat(state.newlyUnlocked.map((u) => el('div', { class: 'go-unlock', text: `${u.name}: ${u.desc}` })))));
+    }
+    children.push(el('div', { class: 'go-actions' }, [
+      el('button', { 'data-testid': 'btn-restart', class: 'btn btn-primary', text: 'Play Again', onclick: () => dispatch({ type: 'RESTART' }) }),
+      el('button', { 'data-testid': 'btn-gameover-progress', class: 'btn', text: '🏆 Progress', onclick: () => dispatch({ type: 'OPEN_MODAL', name: 'unlocks' }) }),
+    ]));
+    return el('div', { class: 'gameover' }, children);
   }
 
   function renderMenu() {
     return el('div', { 'data-testid': 'menu', class: 'menu-dropdown' }, [
       el('button', { 'data-testid': 'btn-menu-staff', class: 'menu-item', text: '👥 Staff', onclick: () => dispatch({ type: 'OPEN_MODAL', name: 'staff' }) }),
+      el('button', { 'data-testid': 'btn-menu-progress', class: 'menu-item', text: '🏆 Progress', onclick: () => dispatch({ type: 'OPEN_MODAL', name: 'unlocks' }) }),
       el('button', { 'data-testid': 'btn-menu-howto', class: 'menu-item', text: '❓ How to Play', onclick: () => dispatch({ type: 'OPEN_MODAL', name: 'howto' }) }),
     ]);
   }
@@ -755,10 +924,50 @@
     ];
   }
 
+  function renderUnlocksBody() {
+    const stat = (label, value) => el('div', { class: 'score-stat' }, [
+      el('span', { class: 'score-num', text: String(value) }),
+      el('span', { class: 'score-label', text: label }),
+    ]);
+    const rows = UNLOCKS.map((u) => {
+      const owned = !!meta.unlocks[u.key];
+      return el('div', { 'data-testid': 'unlock-' + u.key, class: 'unlock-row' + (owned ? ' owned' : '') }, [
+        el('div', { class: 'unlock-top' }, [
+          el('span', { class: 'unlock-name', text: (owned ? '✓ ' : '🔒 ') + u.name }),
+          el('span', { class: 'unlock-req', text: owned ? 'Unlocked' : `Score ${u.score}` }),
+        ]),
+        el('div', { class: 'unlock-desc', text: u.desc }),
+        owned ? null : el('div', { class: 'unlock-prog' }, [
+          el('div', { class: 'unlock-prog-fill', style: `width:${Math.min(100, Math.round(meta.best.score / u.score * 100))}%` }),
+        ]),
+      ]);
+    });
+    return [
+      el('p', { class: 'modal-sub', text: 'Your high score is the cash and reputation you reach in a run. Beat it to unlock perks that carry into every future run.' }),
+      el('div', { 'data-testid': 'score-grid', class: 'score-grid' }, [
+        stat('Best score', meta.best.score),
+        stat('Best cash', '$' + meta.best.cash),
+        stat('Best rep', meta.best.rep),
+        stat('Best day', meta.best.day),
+        stat('Runs', meta.lifetime.runs),
+        stat('Weeks won', meta.lifetime.wins),
+      ]),
+      el('p', { class: 'modal-sub staff-tools-title', text: 'Unlocks' }),
+      el('div', { class: 'unlock-list' }, rows),
+      el('div', { class: 'reset-row' }, [
+        el('button', {
+          'data-testid': 'btn-reset-progress', class: 'btn modal-close reset-btn' + (state.resetArmed ? ' armed' : ''),
+          text: state.resetArmed ? 'Tap again to erase everything' : 'Reset progress',
+          onclick: () => dispatch({ type: state.resetArmed ? 'RESET_META' : 'ARM_RESET' }),
+        }),
+      ]),
+    ];
+  }
+
   function renderModal() {
     if (!state.modal) return null;
-    const title = state.modal === 'staff' ? 'Your Crew' : 'How to Play';
-    const body = state.modal === 'staff' ? renderStaffBody() : renderHowtoBody();
+    const title = state.modal === 'staff' ? 'Your Crew' : (state.modal === 'unlocks' ? 'Your Progress' : 'How to Play');
+    const body = state.modal === 'staff' ? renderStaffBody() : (state.modal === 'unlocks' ? renderUnlocksBody() : renderHowtoBody());
     return el('div', {
       class: 'modal-backdrop',
       onclick: (e) => { if (e.target === e.currentTarget) dispatch({ type: 'CLOSE_MODAL' }); },
@@ -795,12 +1004,15 @@
   // ===========================================================================
   window.GEG = {
     getState: () => structuredClone(state),
+    getMeta: () => structuredClone(meta),
     newGame: (seed) => newGame(seed),
     dispatch,
     endDay: () => dispatch({ type: 'END_DAY' }),
-    addCash: (n) => { state.cash += n; render(); },
+    addCash: (n) => { state.cash += n; trackPeaks(); render(); },
+    resetMeta: () => { meta = defaultMeta(); saveMeta(meta); render(); },
     CONFIG,
   };
 
+  meta = loadMeta();
   newGame();
 })();

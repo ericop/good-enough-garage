@@ -256,6 +256,38 @@
     .howto-count { color: var(--muted); font-size: 0.82rem; }
     .howto-done { width: auto; }
 
+    /* ---------- score / progress ---------- */
+    .score-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 10px 0; }
+    .score-stat { background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; padding: 8px; text-align: center; }
+    .score-num { display: block; font-size: 1.12rem; font-weight: 800; }
+    .score-label { display: block; font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); margin-top: 2px; }
+
+    .final-score { text-align: center; background: var(--panel-2); border: 1px solid var(--line); border-radius: 12px; padding: 12px; margin: 14px 0; }
+    .final-score.newbest { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+    .fs-num { display: block; font-size: 2.3rem; font-weight: 900; color: var(--accent); line-height: 1; }
+    .fs-label { display: block; font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.6px; color: var(--muted); margin-top: 5px; }
+    .final-score.newbest .fs-label { color: var(--accent); }
+
+    .unlock-list { display: flex; flex-direction: column; gap: 8px; }
+    .unlock-row { background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; padding: 10px; }
+    .unlock-row.owned { border-color: var(--good-dark); }
+    .unlock-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+    .unlock-name { font-weight: 800; font-size: 0.95rem; }
+    .unlock-row.owned .unlock-name { color: var(--good); }
+    .unlock-req { font-size: 0.72rem; color: var(--muted); white-space: nowrap; }
+    .unlock-desc { color: var(--muted); font-size: 0.82rem; margin-top: 2px; }
+    .unlock-prog { height: 5px; background: #0e141b; border-radius: 999px; margin-top: 8px; overflow: hidden; }
+    .unlock-prog-fill { height: 100%; background: var(--accent); }
+
+    .reset-row { margin-top: 14px; text-align: center; }
+    .reset-btn { width: auto; min-height: 40px; padding: 8px 14px; font-size: 0.82rem; cursor: pointer; }
+    .reset-btn.armed { background: var(--bad); color: #fff; border-color: var(--bad); }
+
+    .go-unlocks { background: rgba(255, 201, 74, 0.1); border: 1px solid rgba(255, 201, 74, 0.3); border-radius: 12px; padding: 10px 12px; margin: 8px 0 4px; text-align: left; }
+    .go-unlocks-title { font-weight: 800; margin-bottom: 6px; }
+    .go-unlock { font-size: 0.84rem; color: var(--muted); margin-top: 2px; }
+    .go-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; }
+
     /* ---------- toasts ---------- */
     .toast-wrap { position: fixed; left: 0; right: 0; bottom: 14px; display: flex; flex-direction: column; align-items: center; gap: 8px; pointer-events: none; z-index: 50; padding: 0 10px; }
     .toast {
