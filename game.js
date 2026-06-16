@@ -32,12 +32,17 @@
     faultValue: 12,
     specialtyBonus: 8,
     cleanJobMult: 0.5,
-    // reputation deltas
-    repCleanJob: +5,
-    repComeback: -10,
-    repCarLeft: -5,
-    repRushHit: +5,
-    repRushMissed: -8,
+    // reputation deltas (rep is now an economy engine, not a death timer)
+    repCleanJob: +6,
+    repComeback: -8,
+    repCarLeft: -3,
+    repRushHit: +6,
+    repRushMissed: -5,
+    // specialty renown: matched repairs build a lane that pays more and draws more of that work
+    renownPerLevel: 4,         // matched repairs of a type per renown level
+    renownBonusPerLevel: 6,    // extra $ per matched repair, per renown level
+    maxRenownLevel: 4,
+    renownSpawnTilt: 0.6,      // how strongly renown skews which faults show up
     // comeback
     comebackCashClawbackFraction: 1.0,
     // endless mode (past the 5-day week)
@@ -51,14 +56,30 @@
   // ===========================================================================
   const CARS = ["'08 Civic", "'15 F-150", "'03 Beetle", "'21 Model 3", "'99 Miata", "'12 Odyssey", "'06 Corolla", "'18 Wrangler"];
 
+  // wLo/wHi = spawn weight at 0 rep vs 100 rep. As your shop's reputation climbs, the
+  // cheap crowd thins out and the big spenders (enthusiasts, collectors) start showing up.
   const CUSTOMERS = [
-    { type: 'commuter',   basePay: 35 },
-    { type: 'parent',     basePay: 45 },
-    { type: 'enthusiast', basePay: 70 },
-    { type: 'fleet',      basePay: 40 },
-    { type: 'tightwad',   basePay: 25 },
+    { type: 'tightwad',   basePay: 25, wLo: 3.0, wHi: 0.3 },
+    { type: 'commuter',   basePay: 35, wLo: 2.2, wHi: 1.0 },
+    { type: 'fleet',      basePay: 40, wLo: 1.5, wHi: 1.6 },
+    { type: 'parent',     basePay: 45, wLo: 1.2, wHi: 1.6 },
+    { type: 'enthusiast', basePay: 70, wLo: 0.5, wHi: 2.2 },
+    { type: 'collector',  basePay: 120, wLo: 0.0, wHi: 1.4, minRep: 75 }, // classic-car whales, high rep only
   ];
-  const CUSTOMER_NAME = { commuter: 'Commuter', parent: 'Parent', enthusiast: 'Enthusiast', fleet: 'Fleet', tightwad: 'Tightwad' };
+  const CUSTOMER_NAME = { commuter: 'Commuter', parent: 'Parent', enthusiast: 'Enthusiast', fleet: 'Fleet', tightwad: 'Tightwad', collector: 'Collector' };
+
+  // Reputation tiers: a named standing plus a payout multiplier. Climbing this is the engine.
+  const REP_TIERS = [
+    { min: 0,  name: 'On Notice', mult: 0.85 },
+    { min: 20, name: 'Getting By', mult: 1.00 },
+    { min: 40, name: 'Solid',      mult: 1.10 },
+    { min: 60, name: 'Trusted',    mult: 1.20 },
+    { min: 80, name: 'Renowned',   mult: 1.35 },
+    { min: 95, name: 'Legendary',  mult: 1.50 },
+  ];
+  function repTier(rep) { let t = REP_TIERS[0]; for (const x of REP_TIERS) if (rep >= x.min) t = x; return t; }
+
+  const RENOWN_TIER_NAMES = ['Novice', 'Skilled', 'Expert', 'Master', 'Legend'];
 
   const FAULT_TYPES = ['engine', 'brakes', 'electrical', 'body'];
   const FAULT_LABELS = {
@@ -105,10 +126,77 @@
     { icon: '🛠️', title: '3. Repair (1 token)', body: `Assign a mechanic to a revealed fault. If it matches their specialty (marked ★) you earn a +$${CONFIG.specialtyBonus} bonus on top of the repair. See the menu > Staff for who is good at what.` },
     { icon: '✅', title: '4. Ship It (the commit)', body: 'Hand the car back and get paid. Ship a car with faults still hidden or unfixed and it pays now, but the customer returns the next day, unhappy, and you refund them. That is the gamble.' },
     { icon: '⏳', title: 'The squeeze', body: 'Tokens and bays are limited, and every token you spend makes waiting cars lose patience. Triage! Orange RUSH jobs pay extra but leave fast.' },
+    { icon: '📈', title: 'Build your shop', body: 'Clean work raises your reputation, which lifts a payout multiplier AND draws richer customers (enthusiasts, even collectors). Matching mechanics to faults builds specialties that pay a bonus and pull in more of that work. Watch the numbers grow.' },
     { icon: '🏁', title: 'Beat the week', body: 'Meet the day quota to reach the upgrade shop, then carry on. Survive all 5 days to win the week.' },
     { icon: '♾️', title: 'Go endless', body: 'After Week 1 the shop keeps going: quotas climb, bigger power-ups appear, and you push for a high score (the cash and reputation you reach). Failing ends the run.' },
     { icon: '🏆', title: 'Unlock & return', body: 'Your best score sticks around and unlocks permanent perks for future runs. Check the menu > Progress to see what is unlocked and what is next. Good luck!' },
   ];
+
+  // ===========================================================================
+  // ART - tiny inline SVGs (no external files, keeps the two-file / zero-network rule)
+  // ===========================================================================
+  const VEHICLE_SHAPE = {
+    "'08 Civic": 'car', "'06 Corolla": 'car', "'03 Beetle": 'car', "'99 Miata": 'car', "'21 Model 3": 'car',
+    "'15 F-150": 'truck', "'12 Odyssey": 'van', "'18 Wrangler": 'suv',
+  };
+  const VEHICLE_PAINT = {
+    car:   { body: '#6db1ff', cab: '#cfe4ff' },
+    truck: { body: '#ff9f5a', cab: '#ffd9b8' },
+    van:   { body: '#5ec2a8', cab: '#cdeee4' },
+    suv:   { body: '#b48cf0', cab: '#e6d8fb' },
+  };
+  function wheels() {
+    return '<circle cx="14" cy="20" r="3.4" fill="#161c24" stroke="#e8eef5" stroke-width="1.3"/>' +
+           '<circle cx="33" cy="20" r="3.4" fill="#161c24" stroke="#e8eef5" stroke-width="1.3"/>';
+  }
+  function vehicleSVG(model) {
+    const shape = VEHICLE_SHAPE[model] || 'car';
+    const p = VEHICLE_PAINT[shape];
+    let body = '';
+    if (shape === 'car') {
+      body = `<rect x="3" y="12" width="40" height="8" rx="3.5" fill="${p.body}"/>` +
+             `<path d="M12 12 q3 -7 9 -7 h6 q5 0 7 7 z" fill="${p.cab}"/>`;
+    } else if (shape === 'truck') {
+      body = `<rect x="3" y="13" width="40" height="7" rx="2" fill="${p.body}"/>` +
+             `<path d="M4 13 v-5 q0 -2 2 -2 h9 q2 0 3 2 l2 5 z" fill="${p.cab}"/>` +
+             `<rect x="23" y="9" width="19" height="5" rx="1" fill="${p.body}"/>`;
+    } else if (shape === 'van') {
+      body = `<path d="M4 20 v-11 q0 -3 3 -3 h22 q9 0 11 9 v5 z" fill="${p.body}"/>` +
+             `<rect x="8" y="9" width="9" height="6" rx="1" fill="${p.cab}"/>` +
+             `<rect x="20" y="9" width="9" height="6" rx="1" fill="${p.cab}"/>`;
+    } else { // suv
+      body = `<rect x="3" y="12" width="40" height="8" rx="3" fill="${p.body}"/>` +
+             `<path d="M9 12 v-6 q0 -1.5 1.5 -1.5 h19 q3 0 4 7.5 z" fill="${p.cab}"/>`;
+    }
+    return `<svg viewBox="0 0 46 25" class="veh" aria-hidden="true">${body}${wheels()}</svg>`;
+  }
+
+  // Staff personas: shirt + head + cap/hair + an embroidered name patch.
+  const LOOKS = {
+    hank: { shirt: '#8a929b', cap: '#5b6470', skin: '#e8b88f' },
+    rosa: { shirt: '#e6789f', hair: '#3a2a22', skin: '#d99a6c' },
+    deb:  { shirt: '#5aa9ff', hair: '#caa24a', skin: '#e8b88f' },
+    tom:  { shirt: '#6fbf73', cap: '#3f7a43', skin: '#caa07a' },
+    gus:  { shirt: '#c97b4a', cap: '#7a4a2a', skin: '#e0b48a', beard: '#6b5440' },
+    ada:  { shirt: '#b07be0', hair: '#241c28', skin: '#a9744f' },
+    _exp: { shirt: '#d8a13a', cap: '#9c7320', skin: '#e0b48a' },
+    _default: { shirt: '#7f8a96', cap: '#586270', skin: '#e0b48a' },
+  };
+  function escapeText(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+  function personaSVG(mech) {
+    const L = LOOKS[mech.id] || (mech.experienced ? LOOKS._exp : LOOKS._default);
+    const shirt = `<path d="M7 48 v-6 q0 -8 8 -10 l9 -2 l9 2 q8 2 8 10 v6 z" fill="${L.shirt}"/>`;
+    const head = `<circle cx="24" cy="18" r="9" fill="${L.skin}"/>` +
+                 `<circle cx="15" cy="18.5" r="1.6" fill="${L.skin}"/><circle cx="33" cy="18.5" r="1.6" fill="${L.skin}"/>`;
+    let top = '';
+    if (L.cap) top = `<path d="M14.5 15 a9.5 9 0 0 1 19 0 z" fill="${L.cap}"/><rect x="30" y="13.5" width="10" height="3" rx="1.5" fill="${L.cap}"/>`;
+    else if (L.hair) top = `<path d="M14 17 a10 10 0 0 1 20 0 q-10 -7 -20 0 z" fill="${L.hair}"/>`;
+    const beard = L.beard ? `<path d="M16.5 21 a8 8 0 0 0 15 0 q-7.5 6 -15 0 z" fill="${L.beard}"/>` : '';
+    const eyes = `<circle cx="20.7" cy="18.5" r="1" fill="#26303a"/><circle cx="27.3" cy="18.5" r="1" fill="#26303a"/>`;
+    const patch = `<rect x="14" y="37.5" width="20" height="6.5" rx="1.5" fill="#f4f1ea" stroke="#00000022"/>` +
+                  `<text x="24" y="42.4" text-anchor="middle" font-size="4.3" font-weight="700" fill="#2a2a2a" font-family="system-ui,sans-serif">${escapeText(mech.name)}</text>`;
+    return `<svg viewBox="0 0 48 48" class="persona-svg" aria-hidden="true">${shirt}${head}${top}${beard}${eyes}${patch}</svg>`;
+  }
 
   // Beefier upgrades that show up once you push past the first week (or sooner with the Premium Parts unlock).
   const PREMIUM_UPGRADES = [
@@ -216,13 +304,10 @@
     setTimeout(() => dispatch({ type: 'REMOVE_TOAST', id }), 3800);
   }
 
+  // Reputation is now an economy engine, not a death timer: it scales payouts and the
+  // customers you attract. The only way to fail is missing the day's quota.
   function changeRep(delta) {
     state.rep = Math.max(0, Math.min(100, state.rep + delta));
-    if (state.rep < 1 && state.screen !== 'gameover') {
-      state.screen = 'gameover';
-      state.result = 'lose';
-      state.loseReason = 'Your reputation hit rock bottom.';
-    }
   }
 
   // ===========================================================================
@@ -236,15 +321,39 @@
     return 3;
   }
 
+  function renownLevel(type) {
+    return Math.min(CONFIG.maxRenownLevel, Math.floor((state.renown[type] || 0) / CONFIG.renownPerLevel));
+  }
+
+  function weightedPick(items, weightFn) {
+    let total = 0;
+    for (const it of items) total += Math.max(0, weightFn(it));
+    if (total <= 0) return items[0];
+    let r = rng() * total;
+    for (const it of items) { r -= Math.max(0, weightFn(it)); if (r < 0) return it; }
+    return items[items.length - 1];
+  }
+
+  // Higher reputation thins the cheap crowd and draws the big spenders.
+  function pickCustomer() {
+    const f = Math.max(0, Math.min(1, state.rep / 100));
+    const c = weightedPick(CUSTOMERS, (x) => (x.minRep && state.rep < x.minRep) ? 0 : (x.wLo + (x.wHi - x.wLo) * f));
+    return { type: c.type, basePay: c.basePay };
+  }
+
+  // Your strongest specialty draws more of that kind of work.
+  function pickFaultType() {
+    return weightedPick(FAULT_TYPES, (t) => 1 + renownLevel(t) * CONFIG.renownSpawnTilt);
+  }
+
   /** @returns {Car} */
   function makeCar() {
     const model = pick(CARS);
-    const base = pick(CUSTOMERS);
-    const customer = { type: base.type, basePay: base.basePay };
+    const customer = pickCustomer();
     const count = weightedFaultCount();
     const faults = [];
     for (let i = 0; i < count; i++) {
-      const type = pick(FAULT_TYPES);
+      const type = pickFaultType();
       const label = pick(FAULT_LABELS[type]);
       faults.push({ type, label, revealed: false, repaired: false, specialtyMatch: false });
     }
@@ -273,17 +382,37 @@
   // ===========================================================================
   /** @param {Car} car */
   function computeShip(car) {
-    let chips = car.customer.basePay;
+    const base = car.customer.basePay;
+    let parts = 0, specialty = 0, renownBonus = 0;
     for (const f of car.faults) {
       if (f.repaired) {
-        chips += CONFIG.faultValue;
-        if (f.specialtyMatch) chips += CONFIG.specialtyBonus;
+        parts += CONFIG.faultValue;
+        if (f.specialtyMatch) {
+          specialty += CONFIG.specialtyBonus;
+          renownBonus += renownLevel(f.type) * CONFIG.renownBonusPerLevel;
+        }
       }
     }
     const clean = car.faults.every((f) => f.repaired);
     const dirty = car.faults.some((f) => !f.repaired);
-    const mult = 1 + (clean ? CONFIG.cleanJobMult : 0);
-    return { base: Math.round(chips * mult), clean, dirty };
+    const cleanMult = clean ? (1 + CONFIG.cleanJobMult) : 1;
+    const tier = repTier(state.rep);
+    const chips = base + parts + specialty + renownBonus;
+    const payout = Math.round(chips * cleanMult * tier.mult);
+    return { payout, clean, dirty, base, parts, specialty, renownBonus, cleanMult, tier };
+  }
+
+  // Human-readable money math, so the player can see exactly what pays.
+  function payoutBreakdown(r, car) {
+    const bits = [`$${r.base} base`];
+    if (r.parts) bits.push(`+$${r.parts} parts`);
+    if (r.specialty) bits.push(`+$${r.specialty} spec`);
+    if (r.renownBonus) bits.push(`+$${r.renownBonus} renown`);
+    let s = bits.join(' ');
+    if (r.cleanMult > 1) s += ` ×${r.cleanMult} clean`;
+    if (r.tier.mult !== 1) s += ` ×${r.tier.mult} ${r.tier.name}`;
+    if (car.rush) s += ` +$${CONFIG.rushBonus} rush`;
+    return s;
   }
 
   // ===========================================================================
@@ -340,6 +469,7 @@
     if (!mech) return;
     f.repaired = true;
     f.specialtyMatch = mech.specialties.includes(f.type);
+    if (f.specialtyMatch) state.renown[f.type] = (state.renown[f.type] || 0) + 1;
     state.pickerFor = null;
     logEvent(`${mech.name} fixed ${f.label} on ${car.model}${f.specialtyMatch ? ' (specialty!)' : ''}.`);
     if (!free) { state.tokensLeft--; tick(); }
@@ -353,12 +483,12 @@
       logEvent(`Comeback sorted: ${car.model}${r.clean ? ' (done right this time)' : ' sent back out'}, no charge.`);
       if (r.clean) changeRep(CONFIG.repCleanJob);
     } else {
-      let payout = r.base;
+      let payout = r.payout;
       if (car.rush) { payout += CONFIG.rushBonus; changeRep(CONFIG.repRushHit); }
       if (r.clean) changeRep(CONFIG.repCleanJob);
       state.cash += payout;
       state.dayRevenue += payout;
-      logEvent(`Shipped ${car.model}: +$${payout}${r.clean ? ' clean!' : ''}${car.rush ? ' rush!' : ''}.`);
+      logEvent(`Shipped ${car.model}: +$${payout} (${payoutBreakdown(r, car)}).`);
     }
     if (r.dirty) {
       car.isComeback = true; // returns to bite you next day
@@ -571,6 +701,7 @@
       hasScanTool: false,
       patienceBonus: 0,
       premium: false,
+      renown: { engine: 0, brakes: 0, electrical: 0, body: 0 },
       lot: [],
       inBays: [],
       pendingComebacks: [],
@@ -650,6 +781,7 @@
         }
         if (k === 'class') e.className = v;
         else if (k === 'text') e.textContent = v;
+        else if (k === 'html') e.innerHTML = v;
         else if (k === 'disabled') e.setAttribute('disabled', '');
         else if (k.length > 2 && k.slice(0, 2) === 'on' && typeof v === 'function') e.addEventListener(k.slice(2).toLowerCase(), v);
         else e.setAttribute(k, v);
@@ -679,7 +811,10 @@
   // Compact card header: model + badges on the left, customer/pay on the right (fills the width).
   function carHeader(car) {
     return el('div', { class: 'car-top' }, [
-      el('div', { class: 'car-id' }, [el('span', { class: 'car-model', text: car.model })].concat(carBadges(car))),
+      el('div', { class: 'car-id' }, [
+        el('span', { class: 'veh-icon', html: vehicleSVG(car.model) }),
+        el('span', { class: 'car-model', text: car.model }),
+      ].concat(carBadges(car))),
       el('span', { class: 'car-cust', text: custLine(car) }),
     ]);
   }
@@ -703,12 +838,21 @@
       el('div', { class: 'statbar' }, [
         statItem('stat-day', 'Day', `${state.day}/${CONFIG.daysToWin}`),
         statItem('stat-cash', 'Cash', `$${state.cash}`),
-        statItem('stat-quota', 'Quota', `$${state.quota}`),
         statItem('stat-revenue', 'Revenue', `$${state.dayRevenue}`),
         statItem('stat-tokens', 'Tokens', `${state.tokensLeft}`),
-        statItem('stat-rep', 'Rep', `${state.rep}`, state.rep < 25),
+        statItem('stat-rep', repTier(state.rep).name, `${state.rep}`, state.rep < 20),
         statItem('stat-seed', 'Seed', `${state.seed}`),
       ]),
+      renderQuotaBar(),
+    ]);
+  }
+
+  function renderQuotaBar() {
+    const pct = state.quota > 0 ? Math.min(100, Math.round(state.dayRevenue / state.quota * 100)) : 100;
+    const met = state.dayRevenue >= state.quota;
+    return el('div', { 'data-testid': 'quota-bar', class: 'quota-bar' }, [
+      el('div', { class: 'quota-fill' + (met ? ' met' : ''), style: `width:${pct}%` }),
+      el('span', { 'data-testid': 'stat-quota', class: 'quota-bar-label', text: met ? `Quota met! $${state.dayRevenue} / $${state.quota}` : `$${state.dayRevenue} / $${state.quota} to close` }),
     ]);
   }
 
@@ -856,8 +1000,15 @@
   }
 
   function renderShop() {
+    const tier = repTier(state.rep);
+    const comebacks = state.pendingComebacks.length;
     return el('div', { class: 'shop' }, [
       el('h2', { class: 'screen-title', text: `Day ${state.day} cleared!` }),
+      el('div', { 'data-testid': 'day-summary', class: 'day-summary' }, [
+        el('span', {}, [el('b', { text: `$${state.dayRevenue}` }), ' earned today']),
+        el('span', {}, ['Reputation ', el('b', { text: `${state.rep}` }), ` (${tier.name}, ×${tier.mult} pay)`]),
+        comebacks ? el('span', { class: 'warn' }, [el('b', { text: `${comebacks}` }), ' comeback' + (comebacks > 1 ? 's' : '') + ' returning tomorrow']) : null,
+      ]),
       el('p', { class: 'help', text: `You have $${state.cash} in the bank. Buy upgrades, then continue to Day ${state.day + 1}.` }),
       el('div', { class: 'shop-cards' }, state.shopOffers.map(renderShopCard)),
       el('button', { 'data-testid': 'btn-continue', class: 'btn btn-primary', text: `Continue to Day ${state.day + 1}`, onclick: () => dispatch({ type: 'CONTINUE' }) }),
@@ -908,12 +1059,30 @@
 
   function renderStaffBody() {
     const rows = state.mechanics.map((m) => el('div', { 'data-testid': 'staff-' + m.id, class: 'staff-row' + (m.experienced ? ' exp' : '') }, [
-      el('div', { class: 'staff-top' }, [
-        el('span', { class: 'staff-name' }, [m.name, m.experienced ? el('span', { class: 'badge exp-badge', text: 'EXPERIENCED' }) : null]),
-        el('span', { class: 'staff-specs' }, m.specialties.map(typeBadge)),
+      el('span', { class: 'persona', html: personaSVG(m) }),
+      el('div', { class: 'staff-info' }, [
+        el('div', { class: 'staff-top' }, [
+          el('span', { class: 'staff-name' }, [m.name, m.experienced ? el('span', { class: 'badge exp-badge', text: 'EXPERIENCED' }) : null]),
+          el('span', { class: 'staff-specs' }, m.specialties.map(typeBadge)),
+        ]),
+        el('div', { class: 'staff-bio', text: MECH_BIOS[m.id] || 'A master technician who can turn a hand to almost anything.' }),
       ]),
-      el('div', { class: 'staff-bio', text: MECH_BIOS[m.id] || 'A master technician who can turn a hand to almost anything.' }),
     ]));
+
+    // Specialty renown: the in-run engine you build by matching mechanics to faults.
+    const renownRows = FAULT_TYPES.map((t) => {
+      const lvl = renownLevel(t);
+      const atMax = lvl >= CONFIG.maxRenownLevel;
+      const into = (state.renown[t] || 0) % CONFIG.renownPerLevel;
+      const pct = atMax ? 100 : Math.round(into / CONFIG.renownPerLevel * 100);
+      return el('div', { 'data-testid': 'renown-' + t, class: 'renown-row' }, [
+        el('div', { class: 'renown-top' }, [
+          typeBadge(t),
+          el('span', { class: 'renown-tier', text: RENOWN_TIER_NAMES[lvl] + (lvl > 0 ? ` · +$${lvl * CONFIG.renownBonusPerLevel}/match` : '') }),
+        ]),
+        el('div', { class: 'renown-bar' }, [el('div', { class: 'renown-fill', style: `width:${pct}%` })]),
+      ]);
+    });
 
     const tools = [`Bays: ${state.bays}`, `Tokens per day: ${CONFIG.startTokens + state.bonusTokens}`];
     if (state.hasScanTool) tools.push('Scan Tool');
@@ -922,6 +1091,9 @@
     const out = [
       el('p', { class: 'modal-sub', text: `Your mechanics and what they are best at. Match a mechanic to a fault of their specialty (★) for a +$${CONFIG.specialtyBonus} bonus.` }),
       el('div', { class: 'staff-list' }, rows),
+      el('p', { class: 'modal-sub staff-tools-title', text: 'Shop specialties' }),
+      el('p', { class: 'modal-hint', text: 'Matched repairs build a specialty: higher tiers pay a bonus and draw more of that work to your lot.' }),
+      el('div', { class: 'renown-list' }, renownRows),
     ];
     // Surface the Experienced Eye ability once the career unlock is earned.
     if (meta.unlocks.xray) {

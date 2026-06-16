@@ -290,6 +290,32 @@
     .go-unlock { font-size: 0.84rem; color: var(--muted); margin-top: 2px; }
     .go-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; }
 
+    /* ---------- engine: quota bar, renown, art ---------- */
+    .quota-bar { position: relative; height: 22px; margin-top: 8px; background: #0e141b; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; }
+    .quota-fill { height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), #ffe0a0); transition: width .3s ease; }
+    .quota-fill.met { background: linear-gradient(90deg, var(--good), #8be0ab); }
+    .quota-bar-label { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: .74rem; font-weight: 700; color: var(--ink); text-shadow: 0 1px 2px rgba(0,0,0,.6); }
+
+    .veh-icon { display: inline-flex; align-items: center; }
+    .veh-icon .veh { width: 34px; height: 19px; display: block; }
+
+    .persona { flex-shrink: 0; }
+    .persona .persona-svg { width: 46px; height: 46px; display: block; border-radius: 10px; background: #14202c; border: 1px solid var(--line); }
+    .staff-row { display: flex; gap: 10px; align-items: flex-start; }
+    .staff-row.exp { border-color: rgba(78,199,125,.5); }
+    .staff-info { min-width: 0; flex: 1; }
+
+    .renown-list { display: flex; flex-direction: column; gap: 7px; }
+    .renown-row { background: var(--panel-2); border: 1px solid var(--line); border-radius: 9px; padding: 7px 9px; }
+    .renown-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 5px; }
+    .renown-tier { font-size: .76rem; color: var(--muted); font-weight: 700; }
+    .renown-bar { height: 5px; background: #0e141b; border-radius: 999px; overflow: hidden; }
+    .renown-fill { height: 100%; background: var(--accent); transition: width .3s ease; }
+
+    .day-summary { display: flex; flex-direction: column; gap: 3px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin: 6px 0 10px; font-size: .9rem; color: var(--muted); }
+    .day-summary b { color: var(--ink); }
+    .day-summary .warn b { color: var(--comeback); }
+
     /* ---------- toasts ---------- */
     .toast-wrap { position: fixed; left: 0; right: 0; bottom: 14px; display: flex; flex-direction: column; align-items: center; gap: 8px; pointer-events: none; z-index: 50; padding: 0 10px; }
     .toast {
