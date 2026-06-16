@@ -75,6 +75,8 @@
   const HIREABLE = [
     { id: 'deb', name: 'Deb', specialties: ['engine', 'electrical'] },
     { id: 'tom', name: 'Tom', specialties: ['brakes', 'body'] },
+    { id: 'gus', name: 'Gus', specialties: ['engine', 'brakes'], experienced: true },
+    { id: 'ada', name: 'Ada', specialties: ['electrical', 'body'], experienced: true },
   ];
 
   const UPGRADES = [
@@ -91,6 +93,8 @@
     rosa: 'Wiring and bodywork specialist with a steady hand.',
     deb:  'Diagnostics whiz across engines and electrical.',
     tom:  'Brakes and bodywork, fast and tidy.',
+    gus:  'Decades under the hood. Can sense when a car is hiding something.',
+    ada:  'Seen every electrical gremlin there is. Spots hidden trouble fast.',
   };
 
   // "How to Play" wizard, one screen per step.
@@ -98,7 +102,7 @@
     { icon: '🔧', title: 'Welcome to the garage', body: 'You run a repair shop for one week: 5 days. Each day you must earn the rent (the quota) before you close up. Miss it and you are out of business.' },
     { icon: '🚗', title: '1. Intake (free)', body: 'Tap a car in the Lot to pull it into an open Bay. Intake is free and reveals the customer complaint: one fault you can see.' },
     { icon: '🔍', title: '2. Diagnose (1 token)', body: 'Cars can hide up to 3 faults. Spend a token to uncover the next one. "No further faults found" means it is truly clean.' },
-    { icon: '🛠️', title: '3. Repair (1 token)', body: 'Assign a mechanic to a revealed fault. If it matches their specialty (marked ★) you earn a bonus. See the menu > Staff for who is good at what.' },
+    { icon: '🛠️', title: '3. Repair (1 token)', body: `Assign a mechanic to a revealed fault. If it matches their specialty (marked ★) you earn a +$${CONFIG.specialtyBonus} bonus on top of the repair. See the menu > Staff for who is good at what.` },
     { icon: '✅', title: '4. Ship It (the commit)', body: 'Hand the car back and get paid. Ship a car with faults still hidden or unfixed and it pays now, but the customer returns the next day, unhappy, and you refund them. That is the gamble.' },
     { icon: '⏳', title: 'The squeeze', body: 'Tokens and bays are limited, and every token you spend makes waiting cars lose patience. Triage! Orange RUSH jobs pay extra but leave fast.' },
     { icon: '🏁', title: 'Beat the week', body: 'Meet the day quota to reach the upgrade shop, then carry on. Survive all 5 days to win the week.' },
@@ -117,13 +121,22 @@
   // META-PROGRESSION - persists across runs (localStorage). Best score unlocks perks.
   // ===========================================================================
   // Unlocks apply to the START of every future run, in order, when best score >= score.
+  // Each unlock is earned when a career stat passes a threshold (by 'score' or by 'day').
+  // 'apply' (optional) tweaks the START of every future run. The 'xray' unlock has no
+  // apply: it enables an in-run ability that ALSO requires an experienced mechanic on the crew.
   const UNLOCKS = [
-    { key: 'coffee1', name: 'Fresh Pot',     desc: 'Start each run with +1 patience on all cars.', score: 150,  apply: (s) => { s.patienceBonus += 1; } },
-    { key: 'hand1',   name: 'Extra Hand',    desc: 'Start each run with +1 work token per day.',    score: 350,  apply: (s) => { s.bonusTokens += 1; } },
-    { key: 'bay1',    name: 'Roomy Garage',  desc: 'Start each run with +1 bay.',                    score: 600,  apply: (s) => { s.bays += 1; } },
-    { key: 'rep1',    name: 'Good Name',     desc: 'Start each run at 60 reputation.',               score: 900,  apply: (s) => { s.rep = Math.max(s.rep, 60); } },
-    { key: 'premium', name: 'Premium Parts', desc: 'Bigger upgrades appear from Day 1, and all upgrades cost less.', score: 1300, apply: (s) => { s.premium = true; } },
+    { key: 'coffee1', name: 'Fresh Pot',      desc: 'Start each run with +1 patience on all cars.', by: 'score', need: 150,  apply: (s) => { s.patienceBonus += 1; } },
+    { key: 'hand1',   name: 'Extra Hand',     desc: 'Start each run with +1 work token per day.',    by: 'score', need: 350,  apply: (s) => { s.bonusTokens += 1; } },
+    { key: 'bay1',    name: 'Roomy Garage',   desc: 'Start each run with +1 bay.',                    by: 'score', need: 600,  apply: (s) => { s.bays += 1; } },
+    { key: 'xray',    name: 'Experienced Eye', desc: 'Once you hire an experienced mechanic, hidden faults show as "???" in the bay so you know there is still more to find.', by: 'day', need: 10 },
+    { key: 'rep1',    name: 'Good Name',      desc: 'Start each run at 60 reputation.',               by: 'score', need: 900,  apply: (s) => { s.rep = Math.max(s.rep, 60); } },
+    { key: 'premium', name: 'Premium Parts',  desc: 'Bigger upgrades appear from Day 1, and all upgrades cost less.', by: 'score', need: 1300, apply: (s) => { s.premium = true; } },
   ];
+
+  function unlockBest(u) { return u.by === 'day' ? meta.best.day : meta.best.score; }
+  function unlockMet(u) { return unlockBest(u) >= u.need; }
+  function unlockReqText(u) { return u.by === 'day' ? `Day ${u.need}` : `Score ${u.need}`; }
+  function unlockProgress(u) { return Math.min(100, Math.round(unlockBest(u) / u.need * 100)); }
 
   const SAVE_KEY = 'geg.save.v1';
 
@@ -406,7 +419,7 @@
 
     state.newlyUnlocked = [];
     for (const u of UNLOCKS) {
-      if (!meta.unlocks[u.key] && meta.best.score >= u.score) {
+      if (!meta.unlocks[u.key] && unlockMet(u)) {
         meta.unlocks[u.key] = true;
         state.newlyUnlocked.push({ key: u.key, name: u.name, desc: u.desc });
         toast(`Unlocked: ${u.name}!`);
@@ -486,8 +499,8 @@
       const left = HIREABLE.filter((m) => !owned.includes(m.id));
       if (left.length) {
         const m = pick(left);
-        state.mechanics.push({ id: m.id, name: m.name, specialties: m.specialties.slice() });
-        logEvent(`Hired ${m.name} (${m.specialties.join('/')}).`);
+        state.mechanics.push({ id: m.id, name: m.name, specialties: m.specialties.slice(), experienced: !!m.experienced });
+        logEvent(`Hired ${m.name}${m.experienced ? ' (experienced)' : ''} (${m.specialties.join('/')}).`);
       }
     }
     else if (key === 'turbo') state.bonusTokens += 2;
@@ -497,7 +510,7 @@
       const names = ['Ace', 'Sam', 'Jo', 'Kai', 'Lou', 'Max'];
       const used = state.mechanics.map((m) => m.name);
       const name = names.find((n) => !used.includes(n)) || ('Tech ' + (state.mechanics.length + 1));
-      state.mechanics.push({ id: 'master' + state.mechanics.length, name, specialties });
+      state.mechanics.push({ id: 'master' + state.mechanics.length, name, specialties, experienced: true });
       logEvent(`Hired master tech ${name} (${specialties.join('/')}).`);
     }
   }
@@ -583,7 +596,7 @@
     };
 
     // Apply persistent unlocks to the starting state, then derive dependent values.
-    for (const u of UNLOCKS) if (meta.unlocks[u.key]) u.apply(state);
+    for (const u of UNLOCKS) if (meta.unlocks[u.key] && u.apply) u.apply(state);
     state.tokensLeft = CONFIG.startTokens + state.bonusTokens;
     state.peakCash = state.cash;
     state.peakRep = state.rep;
@@ -663,6 +676,14 @@
     return el('span', { class: 'type-badge type-' + type, text: type });
   }
 
+  // Compact card header: model + badges on the left, customer/pay on the right (fills the width).
+  function carHeader(car) {
+    return el('div', { class: 'car-top' }, [
+      el('div', { class: 'car-id' }, [el('span', { class: 'car-model', text: car.model })].concat(carBadges(car))),
+      el('span', { class: 'car-cust', text: custLine(car) }),
+    ]);
+  }
+
   function statItem(testid, label, value, danger) {
     return el('div', { 'data-testid': testid, class: 'stat' + (danger ? ' danger' : '') }, [
       el('span', { class: 'stat-label', text: label }),
@@ -704,8 +725,7 @@
   function renderLotCard(car) {
     const bayFull = state.inBays.length >= state.bays;
     return el('div', { 'data-testid': 'lot-car-' + car.id, class: 'card car' + (car.rush ? ' rush' : '') + (car.isComeback ? ' comeback' : '') }, [
-      el('div', { class: 'car-top' }, [el('span', { class: 'car-model', text: car.model })].concat(carBadges(car))),
-      el('div', { class: 'car-sub', text: custLine(car) }),
+      carHeader(car),
       el('div', { class: 'complaint' }, ['Complaint: ', el('em', { text: `“${car.faults[0].label}”` })]),
       car.rush ? el('div', { class: 'rush-line', text: 'Need it back today, family vacation!' }) : null,
       car.isComeback ? el('div', { class: 'rush-line', text: 'Back again, and not happy.' }) : null,
@@ -726,9 +746,15 @@
     ]);
   }
 
+  // The "Experienced Eye" career unlock, active only when an experienced mechanic is on the crew,
+  // lets you see that hidden faults still exist. Otherwise hidden faults stay invisible until diagnosed.
+  function hasExperiencedMech() { return state.mechanics.some((m) => m.experienced); }
+  function canSeeHidden() { return !!meta.unlocks.xray && hasExperiencedMech(); }
+
   function renderFaultRow(car, f, i, canToken) {
     const tid = 'fault-' + car.id + '-' + i;
     if (!f.revealed) {
+      if (!canSeeHidden()) return null; // hidden faults are invisible without the ability
       return el('div', { 'data-testid': tid, class: 'fault hidden' }, [
         el('span', { class: 'f-q', text: '???' }),
         el('span', { class: 'f-hint', text: 'hidden fault' }),
@@ -759,7 +785,7 @@
         const match = m.specialties.includes(f.type);
         return el('button', {
           'data-testid': 'mech-' + car.id + '-' + i + '-' + m.id, class: 'btn mech' + (match ? ' match' : ''),
-          text: m.name + (match ? ' ★' : ''),
+          text: m.name + (match ? ` ★ +$${CONFIG.specialtyBonus}` : ''),
           onclick: () => dispatch({ type: 'REPAIR', carId: car.id, index: i, mechId: m.id }),
         });
       }));
@@ -772,8 +798,7 @@
     const free = car.isComeback;
     const canToken = free || state.tokensLeft >= 1;
     return el('div', { 'data-testid': 'bay-car-' + car.id, class: 'card car in-bay' + (car.rush ? ' rush' : '') + (car.isComeback ? ' comeback' : '') }, [
-      el('div', { class: 'car-top' }, [el('span', { class: 'car-model', text: car.model })].concat(carBadges(car))),
-      el('div', { class: 'car-sub', text: custLine(car) }),
+      carHeader(car),
       el('div', { class: 'faults' }, car.faults.map((f, i) => renderFaultRow(car, f, i, canToken))),
       el('div', { class: 'bay-actions' }, [
         el('button', {
@@ -882,25 +907,32 @@
   }
 
   function renderStaffBody() {
-    const rows = state.mechanics.map((m) => el('div', { 'data-testid': 'staff-' + m.id, class: 'staff-row' }, [
+    const rows = state.mechanics.map((m) => el('div', { 'data-testid': 'staff-' + m.id, class: 'staff-row' + (m.experienced ? ' exp' : '') }, [
       el('div', { class: 'staff-top' }, [
-        el('span', { class: 'staff-name', text: m.name }),
+        el('span', { class: 'staff-name' }, [m.name, m.experienced ? el('span', { class: 'badge exp-badge', text: 'EXPERIENCED' }) : null]),
         el('span', { class: 'staff-specs' }, m.specialties.map(typeBadge)),
       ]),
-      el('div', { class: 'staff-bio', text: MECH_BIOS[m.id] || 'A reliable member of the crew.' }),
+      el('div', { class: 'staff-bio', text: MECH_BIOS[m.id] || 'A master technician who can turn a hand to almost anything.' }),
     ]));
 
     const tools = [`Bays: ${state.bays}`, `Tokens per day: ${CONFIG.startTokens + state.bonusTokens}`];
     if (state.hasScanTool) tools.push('Scan Tool');
     if (state.patienceBonus > 0) tools.push(`Coffee: +${state.patienceBonus} patience`);
 
-    return [
-      el('p', { class: 'modal-sub', text: 'Your mechanics and what they are best at. Match a mechanic to a fault of their specialty (★) for a bonus.' }),
+    const out = [
+      el('p', { class: 'modal-sub', text: `Your mechanics and what they are best at. Match a mechanic to a fault of their specialty (★) for a +$${CONFIG.specialtyBonus} bonus.` }),
       el('div', { class: 'staff-list' }, rows),
-      el('p', { class: 'modal-sub staff-tools-title', text: 'Your garage' }),
-      el('div', { class: 'staff-tools' }, tools.map((t) => el('span', { class: 'tool-chip', text: t }))),
-      el('p', { class: 'modal-hint', text: 'Hire more specialists and buy tools in the shop between days.' }),
     ];
+    // Surface the Experienced Eye ability once the career unlock is earned.
+    if (meta.unlocks.xray) {
+      out.push(el('p', { class: 'modal-hint', text: hasExperiencedMech()
+        ? '🔎 Experienced Eye active: hidden faults show as "???" in the bay.'
+        : '🔎 Experienced Eye unlocked: hire an experienced mechanic to reveal hidden-fault markers.' }));
+    }
+    out.push(el('p', { class: 'modal-sub staff-tools-title', text: 'Your garage' }));
+    out.push(el('div', { class: 'staff-tools' }, tools.map((t) => el('span', { class: 'tool-chip', text: t }))));
+    out.push(el('p', { class: 'modal-hint', text: 'Hire more specialists and buy tools in the shop between days.' }));
+    return out;
   }
 
   function renderHowtoBody() {
@@ -934,11 +966,11 @@
       return el('div', { 'data-testid': 'unlock-' + u.key, class: 'unlock-row' + (owned ? ' owned' : '') }, [
         el('div', { class: 'unlock-top' }, [
           el('span', { class: 'unlock-name', text: (owned ? '✓ ' : '🔒 ') + u.name }),
-          el('span', { class: 'unlock-req', text: owned ? 'Unlocked' : `Score ${u.score}` }),
+          el('span', { class: 'unlock-req', text: owned ? 'Unlocked' : unlockReqText(u) }),
         ]),
         el('div', { class: 'unlock-desc', text: u.desc }),
         owned ? null : el('div', { class: 'unlock-prog' }, [
-          el('div', { class: 'unlock-prog-fill', style: `width:${Math.min(100, Math.round(meta.best.score / u.score * 100))}%` }),
+          el('div', { class: 'unlock-prog-fill', style: `width:${unlockProgress(u)}%` }),
         ]),
       ]);
     });

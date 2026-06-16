@@ -69,30 +69,31 @@
     .stat.danger .stat-value { color: var(--bad); }
 
     /* ---------- layout ---------- */
-    .help { color: var(--muted); font-size: .85rem; margin: 2px 2px 12px; }
-    .floor-cols { display: grid; grid-template-columns: 1fr; gap: 12px; }
+    .help { color: var(--muted); font-size: .82rem; margin: 0 2px 8px; }
+    .floor-cols { display: grid; grid-template-columns: 1fr; gap: 10px; }
     @media (min-width: 760px) { .floor-cols { grid-template-columns: 1fr 1fr; } }
 
     .panel {
       background: var(--panel); border: 1px solid var(--line);
-      border-radius: var(--radius); padding: 12px;
+      border-radius: var(--radius); padding: 10px;
     }
-    .panel-title { margin: 0 0 10px; font-size: 1rem; display: flex; align-items: baseline; gap: 6px; }
+    .panel-title { margin: 0 0 8px; font-size: 1rem; display: flex; align-items: baseline; gap: 6px; }
     .panel-title .count { color: var(--muted); font-weight: 600; font-size: .85rem; }
-    .cards { display: flex; flex-direction: column; gap: 10px; }
+    .cards { display: flex; flex-direction: column; gap: 8px; }
     .empty { color: var(--muted); font-style: italic; margin: 6px 2px; }
 
     /* ---------- car cards ---------- */
     .card {
       background: var(--panel-2); border: 1px solid var(--line);
-      border-radius: 10px; padding: 10px;
+      border-radius: 10px; padding: 9px 10px;
     }
     .car.rush { border-color: var(--rush); box-shadow: 0 0 0 1px rgba(255,122,69,.25) inset; }
     .car.comeback { border-color: var(--comeback); }
-    .car-top { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+    .car-top { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 2px 8px; margin-bottom: 6px; }
+    .car-id { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; min-width: 0; }
     .car-model { font-weight: 800; font-size: 1.05rem; }
-    .car-sub { color: var(--muted); font-size: .82rem; margin: 2px 0 6px; }
-    .complaint { font-size: .9rem; margin-bottom: 8px; }
+    .car-cust { color: var(--muted); font-size: .78rem; white-space: nowrap; }
+    .complaint { font-size: .9rem; margin-bottom: 6px; }
     .complaint em { color: var(--accent); font-style: italic; }
     .rush-line { font-size: .8rem; color: var(--rush); margin-bottom: 8px; }
 
@@ -102,16 +103,17 @@
     }
     .rush-badge { background: var(--rush); color: #2a0e02; }
     .comeback-badge { background: var(--comeback); color: #240a30; }
+    .exp-badge { background: var(--good); color: #06240f; }
 
     /* patience */
-    .patience { margin-bottom: 10px; }
+    .patience { margin-bottom: 8px; }
     .p-label { font-size: .72rem; color: var(--muted); }
     .p-bar { height: 7px; background: #0e141b; border-radius: 999px; overflow: hidden; margin-top: 3px; }
     .p-fill { height: 100%; background: var(--good); transition: width .2s ease; }
     .p-fill.low { background: var(--bad); }
 
     /* ---------- faults ---------- */
-    .faults { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 10px; }
+    .faults { display: flex; flex-direction: column; gap: 6px; margin: 0 0 8px; }
     .fault, .fault-wrap > .fault {
       display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
       background: #14202c; border: 1px solid var(--line);
@@ -238,7 +240,7 @@
     .staff-list { display: flex; flex-direction: column; gap: 8px; }
     .staff-row { background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; padding: 10px; }
     .staff-top { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px; margin-bottom: 4px; }
-    .staff-name { font-weight: 800; font-size: 1.02rem; }
+    .staff-name { font-weight: 800; font-size: 1.02rem; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
     .staff-specs { display: flex; gap: 4px; flex-wrap: wrap; }
     .staff-bio { color: var(--muted); font-size: 0.84rem; }
     .staff-tools-title { margin-top: 14px; margin-bottom: 6px; color: var(--text, var(--ink)); font-weight: 700; }
