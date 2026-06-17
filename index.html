@@ -316,6 +316,23 @@
     .day-summary b { color: var(--ink); }
     .day-summary .warn b { color: var(--comeback); }
 
+    /* ---------- intake fly-in animation ---------- */
+    .fly-car { position: fixed; z-index: 80; pointer-events: none; will-change: transform; }
+    .fly-car .veh { width: 100%; height: 100%; display: block; filter: drop-shadow(0 3px 4px rgba(0,0,0,.45)); }
+    .fly-smoke { position: absolute; left: 0; bottom: 0; width: 0; height: 0; }
+    .fly-puff {
+      position: absolute; left: -4px; bottom: -2px; width: 9px; height: 9px; border-radius: 50%;
+      background: radial-gradient(circle, rgba(222,222,230,.75), rgba(180,180,190,0) 70%);
+      opacity: 0; animation: puff .55s ease-out forwards;
+    }
+    .fly-puff.p2 { left: -8px; bottom: 1px; animation-delay: .08s; }
+    .fly-puff.p3 { left: -1px; bottom: 2px; animation-delay: .16s; }
+    @keyframes puff {
+      0% { opacity: .7; transform: translate(0,0) scale(.4); }
+      100% { opacity: 0; transform: translate(-13px,3px) scale(1.8); }
+    }
+    @media (prefers-reduced-motion: reduce) { .fly-car { display: none; } }
+
     /* ---------- toasts ---------- */
     .toast-wrap { position: fixed; left: 0; right: 0; bottom: 14px; display: flex; flex-direction: column; align-items: center; gap: 8px; pointer-events: none; z-index: 50; padding: 0 10px; }
     .toast {

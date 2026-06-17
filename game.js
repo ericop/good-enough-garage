@@ -293,6 +293,7 @@
   let state = null;
   let carCounter = 0;
   let toastCounter = 0;
+  let pendingIntakeAnim = null; // {carId, srcRect, model} captured at intake, played after render
 
   function logEvent(msg) {
     state.log.unshift(msg);
@@ -749,7 +750,17 @@
   // ===========================================================================
   function dispatch(action) {
     switch (action.type) {
-      case 'INTAKE': intake(action.carId); break;
+      case 'INTAKE': {
+        // capture the lot car's icon position before the state change / re-render
+        const srcIcon = document.querySelector(`[data-testid="lot-car-${action.carId}"] .veh-icon`);
+        const srcRect = srcIcon ? srcIcon.getBoundingClientRect() : null;
+        const lotCar = state.lot.find((c) => c.id === action.carId);
+        const model = lotCar ? lotCar.model : null;
+        intake(action.carId);
+        const moved = state.inBays.some((c) => c.id === action.carId);
+        pendingIntakeAnim = (moved && srcRect && model) ? { carId: action.carId, srcRect, model } : null;
+        break;
+      }
       case 'DIAGNOSE': diagnose(action.carId); break;
       case 'OPEN_PICKER': state.pickerFor = (state.pickerFor === action.key ? null : action.key); break;
       case 'REPAIR': repair(action.carId, action.index, action.mechId); break;
@@ -772,6 +783,7 @@
     trackPeaks();
     if (state.screen === 'gameover') finalizeRun();
     render();
+    if (pendingIntakeAnim) { const a = pendingIntakeAnim; pendingIntakeAnim = null; flyCarIntoBay(a); }
   }
 
   // ===========================================================================
@@ -1200,6 +1212,50 @@
 
   function renderToasts() {
     return el('div', { class: 'toast-wrap' }, state.toasts.map((t) => el('div', { class: 'toast', text: t.msg })));
+  }
+
+  function prefersReducedMotion() {
+    try { return window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) { return false; }
+  }
+
+  // Fly a clone of the car icon from its old lot spot into its new bay slot:
+  // a quick rev (squat + tire smoke), an arc over, an overshoot, then settle.
+  function flyCarIntoBay({ carId, srcRect, model }) {
+    if (prefersReducedMotion()) return;
+    const destEl = document.querySelector(`[data-testid="bay-car-${carId}"] .veh-icon`);
+    if (!destEl || !srcRect || typeof destEl.animate !== 'function') return;
+    const destRect = destEl.getBoundingClientRect();
+
+    const clone = document.createElement('div');
+    clone.className = 'fly-car';
+    // critical positioning set inline so it never depends on stylesheet cascade
+    clone.style.position = 'fixed';
+    clone.style.zIndex = '80';
+    clone.style.pointerEvents = 'none';
+    clone.style.left = srcRect.left + 'px';
+    clone.style.top = srcRect.top + 'px';
+    clone.style.width = srcRect.width + 'px';
+    clone.style.height = srcRect.height + 'px';
+    clone.innerHTML = vehicleSVG(model) +
+      '<span class="fly-smoke"><span class="fly-puff p1"></span><span class="fly-puff p2"></span><span class="fly-puff p3"></span></span>';
+    document.body.appendChild(clone);
+    destEl.style.visibility = 'hidden'; // hide the parked icon until the clone lands
+
+    const dx = destRect.left - srcRect.left;
+    const dy = destRect.top - srcRect.top;
+    const arcH = Math.min(140, Math.max(44, Math.hypot(dx, dy) * 0.28));
+    const kf = [
+      { offset: 0,    transform: 'translate(0px,0px) rotate(0deg) scale(1)' },
+      { offset: 0.10, transform: `translate(${dx * 0.03}px, ${dy * 0.03 + 5}px) rotate(-4deg) scale(1.12)` }, // rev squat
+      { offset: 0.45, transform: `translate(${dx * 0.5}px, ${dy * 0.5 - arcH}px) rotate(6deg) scale(1)` },     // arc peak
+      { offset: 0.74, transform: `translate(${dx * 1.12}px, ${dy * 0.98 - arcH * 0.2}px) rotate(5deg) scale(1)` }, // overshoot
+      { offset: 0.88, transform: `translate(${dx * 0.96}px, ${dy * 1.01}px) rotate(-2deg) scale(1)` },         // back a touch
+      { offset: 1,    transform: `translate(${dx}px, ${dy}px) rotate(0deg) scale(1)` },                        // settle
+    ];
+    const anim = clone.animate(kf, { duration: 780, easing: 'ease-in-out', fill: 'forwards' });
+    const done = () => { if (clone.isConnected) clone.remove(); if (destEl.isConnected) destEl.style.visibility = ''; };
+    anim.onfinish = done;
+    setTimeout(done, 1600); // safety net if onfinish never fires
   }
 
   function render() {
