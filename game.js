@@ -20,7 +20,7 @@
     startTokens: 6,
     startBays: 2,
     startRep: 50,
-    jobsPerMechanic: 3,        // each mechanic can take this many repair jobs per day
+    jobsPerMechanic: 2,        // each mechanic can take this many repair jobs per day
     quotaByDay:   [120, 160, 220, 300, 400],
     lotSizeByDay: [4,   5,   5,   6,   6],
     faultCountWeights: { 1: 0.5, 2: 0.35, 3: 0.15 },
