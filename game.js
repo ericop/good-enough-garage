@@ -20,6 +20,7 @@
     startTokens: 6,
     startBays: 2,
     startRep: 50,
+    jobsPerMechanic: 3,        // each mechanic can take this many repair jobs per day
     quotaByDay:   [120, 160, 220, 300, 400],
     lotSizeByDay: [4,   5,   5,   6,   6],
     faultCountWeights: { 1: 0.5, 2: 0.35, 3: 0.15 },
@@ -123,7 +124,7 @@
     { icon: '🔧', title: 'Welcome to the garage', body: 'You run a repair shop for one week: 5 days. Each day you must earn the rent (the quota) before you close up. Miss it and you are out of business.' },
     { icon: '🚗', title: '1. Intake (free)', body: 'Tap a car in the Lot to pull it into an open Bay. Intake is free and reveals the customer complaint: one fault you can see.' },
     { icon: '🔍', title: '2. Diagnose (1 token)', body: 'Cars can hide up to 3 faults. Spend a token to uncover the next one. "No further faults found" means it is truly clean.' },
-    { icon: '🛠️', title: '3. Repair (1 token)', body: `Assign a mechanic to a revealed fault. If it matches their specialty (marked ★) you earn a +$${CONFIG.specialtyBonus} bonus on top of the repair. See the menu > Staff for who is good at what.` },
+    { icon: '🛠️', title: '3. Repair (1 token)', body: `Assign a mechanic to a revealed fault. A specialty match (★) earns a +$${CONFIG.specialtyBonus} bonus. Each mechanic only takes ${CONFIG.jobsPerMechanic} jobs a day, so a bigger crew gets more done at once.` },
     { icon: '✅', title: '4. Ship It (the commit)', body: 'Hand the car back and get paid. Ship a car with faults still hidden or unfixed and it pays now, but the customer returns the next day, unhappy, and you refund them. That is the gamble.' },
     { icon: '⏳', title: 'The squeeze', body: 'Tokens and bays are limited, and every token you spend makes waiting cars lose patience. Triage! Orange RUSH jobs pay extra but leave fast.' },
     { icon: '📈', title: 'Build your shop', body: 'Clean work raises your reputation, which lifts a payout multiplier AND draws richer customers (enthusiasts, even collectors). Matching mechanics to faults builds specialties that pay a bonus and pull in more of that work. Watch the numbers grow.' },
@@ -325,6 +326,9 @@
     return Math.min(CONFIG.maxRenownLevel, Math.floor((state.renown[type] || 0) / CONFIG.renownPerLevel));
   }
 
+  // A mechanic can take only so many repair jobs per day (free comeback rework does not count).
+  function mechJobsLeft(mechId) { return CONFIG.jobsPerMechanic - (state.mechJobs[mechId] || 0); }
+
   function weightedPick(items, weightFn) {
     let total = 0;
     for (const it of items) total += Math.max(0, weightFn(it));
@@ -467,12 +471,13 @@
     if (!free && state.tokensLeft < 1) return;
     const mech = state.mechanics.find((m) => m.id === mechId);
     if (!mech) return;
+    if (!free && mechJobsLeft(mechId) <= 0) return; // mechanic has used up today's shift
     f.repaired = true;
     f.specialtyMatch = mech.specialties.includes(f.type);
     if (f.specialtyMatch) state.renown[f.type] = (state.renown[f.type] || 0) + 1;
     state.pickerFor = null;
     logEvent(`${mech.name} fixed ${f.label} on ${car.model}${f.specialtyMatch ? ' (specialty!)' : ''}.`);
-    if (!free) { state.tokensLeft--; tick(); }
+    if (!free) { state.tokensLeft--; state.mechJobs[mechId] = (state.mechJobs[mechId] || 0) + 1; tick(); }
   }
 
   /** Ship It - the commit. */
@@ -650,6 +655,7 @@
     state.quota = quotaForDay(state.day);
     state.dayRevenue = 0;
     state.tokensLeft = CONFIG.startTokens + state.bonusTokens;
+    state.mechJobs = {};
     state.pickerFor = null;
     state.boughtThisShop = [];
     state.shopOffers = [];
@@ -702,6 +708,7 @@
       patienceBonus: 0,
       premium: false,
       renown: { engine: 0, brakes: 0, electrical: 0, body: 0 },
+      mechJobs: {},            // repair jobs each mechanic has done today (resets daily)
       lot: [],
       inBays: [],
       pendingComebacks: [],
@@ -836,7 +843,7 @@
         ]),
       ]),
       el('div', { class: 'statbar' }, [
-        statItem('stat-day', 'Day', `${state.day}/${CONFIG.daysToWin}`),
+        statItem('stat-day', state.day <= CONFIG.daysToWin ? 'Day' : 'Endless', state.day <= CONFIG.daysToWin ? `${state.day}/${CONFIG.daysToWin}` : `Day ${state.day}`),
         statItem('stat-cash', 'Cash', `$${state.cash}`),
         statItem('stat-revenue', 'Revenue', `$${state.dayRevenue}`),
         statItem('stat-tokens', 'Tokens', `${state.tokensLeft}`),
@@ -913,6 +920,8 @@
       ]);
     }
     // revealed but unrepaired
+    const free = car.isComeback;
+    const anyMech = free || state.mechanics.some((m) => mechJobsLeft(m.id) > 0);
     const key = car.id + '#' + i;
     const open = state.pickerFor === key;
     const row = el('div', { 'data-testid': tid, class: 'fault open' }, [
@@ -920,16 +929,19 @@
       typeBadge(f.type),
       el('button', {
         'data-testid': 'btn-repair-' + car.id + '-' + i, class: 'btn btn-repair',
-        disabled: !canToken, text: open ? 'Pick mechanic' : 'Repair',
+        disabled: !canToken || !anyMech, text: open ? 'Pick mechanic' : (anyMech ? 'Repair' : 'No mechanic free'),
         onclick: () => dispatch({ type: 'OPEN_PICKER', key }),
       }),
     ]);
     if (open && canToken) {
       const picker = el('div', { class: 'mech-picker' }, state.mechanics.map((m) => {
         const match = m.specialties.includes(f.type);
+        const left = mechJobsLeft(m.id);
+        const usable = free || left > 0;
         return el('button', {
           'data-testid': 'mech-' + car.id + '-' + i + '-' + m.id, class: 'btn mech' + (match ? ' match' : ''),
-          text: m.name + (match ? ` ★ +$${CONFIG.specialtyBonus}` : ''),
+          disabled: !usable,
+          text: m.name + (match ? ` ★ +$${CONFIG.specialtyBonus}` : '') + (free ? '' : ` ·${left}`),
           onclick: () => dispatch({ type: 'REPAIR', carId: car.id, index: i, mechId: m.id }),
         });
       }));
@@ -1089,7 +1101,7 @@
     if (state.patienceBonus > 0) tools.push(`Coffee: +${state.patienceBonus} patience`);
 
     const out = [
-      el('p', { class: 'modal-sub', text: `Your mechanics and what they are best at. Match a mechanic to a fault of their specialty (★) for a +$${CONFIG.specialtyBonus} bonus.` }),
+      el('p', { class: 'modal-sub', text: `Each mechanic takes up to ${CONFIG.jobsPerMechanic} repair jobs a day. Match one to a fault of their specialty (★) for a +$${CONFIG.specialtyBonus} bonus. Hire more to do more work at once.` }),
       el('div', { class: 'staff-list' }, rows),
       el('p', { class: 'modal-sub staff-tools-title', text: 'Shop specialties' }),
       el('p', { class: 'modal-hint', text: 'Matched repairs build a specialty: higher tiers pay a bonus and draw more of that work to your lot.' }),
