@@ -294,6 +294,9 @@
   let carCounter = 0;
   let toastCounter = 0;
   let pendingIntakeAnim = null; // {carId, srcRect, model} captured at intake, played after render
+  let pendingShipAnim = null;   // {srcRect, model, info} captured at ship
+  let pendingSalute = null;     // {carId, mechId} captured at a successful repair
+  let lastShipInfo = null;      // {payout, clean, comeback} from the most recent shipCar
 
   function logEvent(msg) {
     state.log.unshift(msg);
@@ -488,6 +491,7 @@
       // Already paid on the first (dirty) ship; this is free rework, no charge.
       logEvent(`Comeback sorted: ${car.model}${r.clean ? ' (done right this time)' : ' sent back out'}, no charge.`);
       if (r.clean) changeRep(CONFIG.repCleanJob);
+      lastShipInfo = { payout: 0, clean: r.clean, comeback: true };
     } else {
       let payout = r.payout;
       if (car.rush) { payout += CONFIG.rushBonus; changeRep(CONFIG.repRushHit); }
@@ -495,6 +499,7 @@
       state.cash += payout;
       state.dayRevenue += payout;
       logEvent(`Shipped ${car.model}: +$${payout} (${payoutBreakdown(r, car)}).`);
+      lastShipInfo = { payout, clean: r.clean, comeback: false };
     }
     if (r.dirty) {
       car.isComeback = true; // returns to bite you next day
@@ -763,8 +768,25 @@
       }
       case 'DIAGNOSE': diagnose(action.carId); break;
       case 'OPEN_PICKER': state.pickerFor = (state.pickerFor === action.key ? null : action.key); break;
-      case 'REPAIR': repair(action.carId, action.index, action.mechId); break;
-      case 'SHIP': shipFromBay(action.carId); break;
+      case 'REPAIR': {
+        const carB = state.inBays.find((c) => c.id === action.carId);
+        const wasRepaired = carB && carB.faults[action.index] ? carB.faults[action.index].repaired : true;
+        repair(action.carId, action.index, action.mechId);
+        const carA = state.inBays.find((c) => c.id === action.carId);
+        const ok = carA && carA.faults[action.index] && carA.faults[action.index].repaired && !wasRepaired;
+        pendingSalute = ok ? { carId: action.carId, mechId: action.mechId } : null;
+        break;
+      }
+      case 'SHIP': {
+        const car = state.inBays.find((c) => c.id === action.carId);
+        const iconEl = document.querySelector(`[data-testid="bay-car-${action.carId}"] .veh-icon`);
+        const srcRect = iconEl ? iconEl.getBoundingClientRect() : null;
+        const model = car ? car.model : null;
+        lastShipInfo = null;
+        shipFromBay(action.carId);
+        pendingShipAnim = (srcRect && model) ? { srcRect, model, info: lastShipInfo } : null;
+        break;
+      }
       case 'END_DAY': endDay(); break;
       case 'BUY': buyUpgrade(action.key); break;
       case 'CONTINUE': advanceDay(); break;
@@ -784,6 +806,8 @@
     if (state.screen === 'gameover') finalizeRun();
     render();
     if (pendingIntakeAnim) { const a = pendingIntakeAnim; pendingIntakeAnim = null; flyCarIntoBay(a); }
+    if (pendingShipAnim) { const a = pendingShipAnim; pendingShipAnim = null; peelOutOfBay(a); }
+    if (pendingSalute) { const a = pendingSalute; pendingSalute = null; showSalute(a); }
   }
 
   // ===========================================================================
@@ -1218,17 +1242,11 @@
     try { return window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) { return false; }
   }
 
-  // Fly a clone of the car icon from its old lot spot into its new bay slot:
-  // a quick rev (squat + tire smoke), an arc over, an overshoot, then settle.
-  function flyCarIntoBay({ carId, srcRect, model }) {
-    if (prefersReducedMotion()) return;
-    const destEl = document.querySelector(`[data-testid="bay-car-${carId}"] .veh-icon`);
-    if (!destEl || !srcRect || typeof destEl.animate !== 'function') return;
-    const destRect = destEl.getBoundingClientRect();
-
+  // A floating car-icon clone on the body, positioned over a source rect. Inline
+  // positioning so flight never depends on stylesheet timing/cascade.
+  function makeCarClone(srcRect, model) {
     const clone = document.createElement('div');
     clone.className = 'fly-car';
-    // critical positioning set inline so it never depends on stylesheet cascade
     clone.style.position = 'fixed';
     clone.style.zIndex = '80';
     clone.style.pointerEvents = 'none';
@@ -1239,23 +1257,102 @@
     clone.innerHTML = vehicleSVG(model) +
       '<span class="fly-smoke"><span class="fly-puff p1"></span><span class="fly-puff p2"></span><span class="fly-puff p3"></span></span>';
     document.body.appendChild(clone);
-    destEl.style.visibility = 'hidden'; // hide the parked icon until the clone lands
+    return clone;
+  }
 
+  // Intake: rev (squat + tire smoke), arc up and over, overshoot, then settle into the bay slot.
+  function flyCarIntoBay({ carId, srcRect, model }) {
+    if (prefersReducedMotion()) return;
+    const destEl = document.querySelector(`[data-testid="bay-car-${carId}"] .veh-icon`);
+    if (!destEl || !srcRect || typeof destEl.animate !== 'function') return;
+    const destRect = destEl.getBoundingClientRect();
+    const clone = makeCarClone(srcRect, model);
+    destEl.style.visibility = 'hidden';
     const dx = destRect.left - srcRect.left;
     const dy = destRect.top - srcRect.top;
     const arcH = Math.min(140, Math.max(44, Math.hypot(dx, dy) * 0.28));
     const kf = [
       { offset: 0,    transform: 'translate(0px,0px) rotate(0deg) scale(1)' },
-      { offset: 0.10, transform: `translate(${dx * 0.03}px, ${dy * 0.03 + 5}px) rotate(-4deg) scale(1.12)` }, // rev squat
-      { offset: 0.45, transform: `translate(${dx * 0.5}px, ${dy * 0.5 - arcH}px) rotate(6deg) scale(1)` },     // arc peak
-      { offset: 0.74, transform: `translate(${dx * 1.12}px, ${dy * 0.98 - arcH * 0.2}px) rotate(5deg) scale(1)` }, // overshoot
-      { offset: 0.88, transform: `translate(${dx * 0.96}px, ${dy * 1.01}px) rotate(-2deg) scale(1)` },         // back a touch
-      { offset: 1,    transform: `translate(${dx}px, ${dy}px) rotate(0deg) scale(1)` },                        // settle
+      { offset: 0.10, transform: `translate(${dx * 0.03}px, ${dy * 0.03 + 5}px) rotate(-4deg) scale(1.12)` },
+      { offset: 0.45, transform: `translate(${dx * 0.5}px, ${dy * 0.5 - arcH}px) rotate(6deg) scale(1)` },
+      { offset: 0.74, transform: `translate(${dx * 1.12}px, ${dy * 0.98 - arcH * 0.2}px) rotate(5deg) scale(1)` },
+      { offset: 0.88, transform: `translate(${dx * 0.96}px, ${dy * 1.01}px) rotate(-2deg) scale(1)` },
+      { offset: 1,    transform: `translate(${dx}px, ${dy}px) rotate(0deg) scale(1)` },
     ];
     const anim = clone.animate(kf, { duration: 780, easing: 'ease-in-out', fill: 'forwards' });
     const done = () => { if (clone.isConnected) clone.remove(); if (destEl.isConnected) destEl.style.visibility = ''; };
     anim.onfinish = done;
-    setTimeout(done, 1600); // safety net if onfinish never fires
+    setTimeout(done, 1600);
+  }
+
+  // Ship It: a wind-up-toy peel-out. Pull back, then zoom off the right edge with smoke,
+  // and float the payout up from the bay.
+  function peelOutOfBay({ srcRect, model, info }) {
+    if (info && !info.comeback && info.payout > 0) spawnFloatCash(srcRect, `+$${info.payout}`, info.clean);
+    if (prefersReducedMotion() || !srcRect) return;
+    const clone = makeCarClone(srcRect, model);
+    if (typeof clone.animate !== 'function') { clone.remove(); return; }
+    const exitX = window.innerWidth - srcRect.left + 80; // fully off the right edge
+    const kf = [
+      { offset: 0,    transform: 'translate(0px,0px) rotate(0deg) scale(1)' },
+      { offset: 0.20, transform: 'translate(-16px,3px) rotate(-5deg) scale(1.08)' }, // wind-up pull-back
+      { offset: 0.34, transform: 'translate(-8px,1px) rotate(-2deg) scale(1.02)' },
+      { offset: 1,    transform: `translate(${exitX}px,-12px) rotate(4deg) scale(1)` }, // zoom off right
+    ];
+    const anim = clone.animate(kf, { duration: 720, easing: 'cubic-bezier(.45,0,.85,.2)', fill: 'forwards' });
+    const done = () => { if (clone.isConnected) clone.remove(); };
+    anim.onfinish = done;
+    setTimeout(done, 1500);
+  }
+
+  function spawnFloatCash(rect, text, clean) {
+    const f = document.createElement('div');
+    f.className = 'float-cash' + (clean ? ' clean' : '');
+    f.textContent = text;
+    f.style.left = (rect.left + rect.width / 2) + 'px';
+    f.style.top = rect.top + 'px';
+    document.body.appendChild(f);
+    const remove = () => { if (f.isConnected) f.remove(); };
+    if (typeof f.animate === 'function') {
+      f.animate([
+        { transform: 'translate(-50%, 0) scale(.8)', opacity: 0 },
+        { transform: 'translate(-50%, -10px) scale(1.1)', opacity: 1, offset: 0.25 },
+        { transform: 'translate(-50%, -46px) scale(1)', opacity: 0 },
+      ], { duration: 1000, easing: 'ease-out', fill: 'forwards' }).onfinish = remove;
+    }
+    setTimeout(remove, 1300);
+  }
+
+  const SALUTE_LINES = [
+    "I've got this one, boss!", 'On it, chief!', 'Consider it handled.',
+    'Leave it to me, boss.', 'This one’s easy.', 'Right away, boss!',
+  ];
+  function saluteLine() {
+    let i = 0;
+    try { i = Math.floor(Math.random() * SALUTE_LINES.length); } catch (e) { i = 0; }
+    return SALUTE_LINES[i] || SALUTE_LINES[0];
+  }
+
+  // Repair: the chosen mechanic pops up by the car, snaps a salute, then a speech bubble.
+  function showSalute({ carId, mechId }) {
+    if (prefersReducedMotion()) return;
+    const mech = state.mechanics.find((m) => m.id === mechId);
+    const carEl = document.querySelector(`[data-testid="bay-car-${carId}"]`);
+    if (!mech || !carEl) return;
+    document.querySelectorAll('.salute-pop').forEach((e) => e.remove()); // no stacking
+    const r = carEl.getBoundingClientRect();
+    const pop = document.createElement('div');
+    pop.className = 'salute-pop';
+    pop.style.position = 'fixed';
+    pop.style.zIndex = '85';
+    pop.style.pointerEvents = 'none';
+    pop.style.left = (r.left + 14) + 'px';
+    pop.style.top = Math.max(58, r.top + 6) + 'px';
+    pop.innerHTML = `<span class="salute-persona">${personaSVG(mech)}</span>` +
+      `<span class="salute-hand">🫡</span>` +
+      `<span class="salute-bubble">${escapeText(saluteLine())}</span>`;
+    document.body.appendChild(pop);
+    setTimeout(() => { if (pop.isConnected) pop.remove(); }, 1700);
   }
 
   function render() {

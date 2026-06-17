@@ -331,7 +331,26 @@
       0% { opacity: .7; transform: translate(0,0) scale(.4); }
       100% { opacity: 0; transform: translate(-13px,3px) scale(1.8); }
     }
-    @media (prefers-reduced-motion: reduce) { .fly-car { display: none; } }
+    /* floating payout on Ship It */
+    .float-cash {
+      position: fixed; z-index: 82; pointer-events: none; transform: translate(-50%, 0);
+      font-weight: 900; font-size: 1.05rem; color: var(--accent);
+      text-shadow: 0 2px 4px rgba(0,0,0,.65); white-space: nowrap;
+    }
+    .float-cash.clean { color: var(--good); }
+
+    /* mechanic salute + speech bubble on repair */
+    .salute-pop { display: flex; align-items: center; gap: 6px; animation: salute-in .25s ease-out, salute-out .4s ease-in 1.3s forwards; }
+    @keyframes salute-in { from { opacity: 0; transform: translateY(10px) scale(.8); } to { opacity: 1; transform: none; } }
+    @keyframes salute-out { to { opacity: 0; transform: translateY(-10px); } }
+    .salute-persona svg { width: 40px; height: 40px; display: block; border-radius: 8px; background: #14202c; border: 1px solid var(--line); box-shadow: 0 4px 10px rgba(0,0,0,.4); }
+    .salute-hand { font-size: 1.15rem; animation: salute-wave .65s ease-in-out forwards; }
+    @keyframes salute-wave { 0% { opacity: 0; transform: translateY(8px) rotate(-12deg); } 35% { opacity: 1; } 60% { transform: translateY(-4px) rotate(10deg); } 100% { opacity: 0; transform: translateY(-2px) rotate(0); } }
+    .salute-bubble { opacity: 0; background: #f4f1ea; color: #222; font-weight: 700; font-size: .8rem; padding: 5px 9px; border-radius: 10px; box-shadow: 0 4px 12px rgba(0,0,0,.45); position: relative; animation: bubble-in .3s ease-out .4s forwards; }
+    .salute-bubble::before { content: ''; position: absolute; left: -5px; top: 50%; transform: translateY(-50%); border: 5px solid transparent; border-right-color: #f4f1ea; }
+    @keyframes bubble-in { from { opacity: 0; transform: translateX(-6px) scale(.92); } to { opacity: 1; transform: none; } }
+
+    @media (prefers-reduced-motion: reduce) { .fly-car, .salute-pop, .float-cash { display: none; } }
 
     /* ---------- toasts ---------- */
     .toast-wrap { position: fixed; left: 0; right: 0; bottom: 14px; display: flex; flex-direction: column; align-items: center; gap: 8px; pointer-events: none; z-index: 50; padding: 0 10px; }
